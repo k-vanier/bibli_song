@@ -1,0 +1,3 @@
+#!/bin/bash
+# Lance le rangement des dossiers « Candidats » (voir list_songs.py --help).
+exec /usr/bin/python3 "$(dirname "$(readlink -f "$0")")/list_songs.py" "$@"

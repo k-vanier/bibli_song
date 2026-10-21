@@ -1,0 +1,35 @@
+directory: /srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/Musiques Low-Res
+library: ~/.config/beets/library.db
+
+plugins: inline
+
+ui:
+  color: no
+
+import:
+  duplicate_action: keep
+  move: no
+  copy: no
+  write: no
+  log: ~/.config/beets/import.log
+
+item_fields:
+  disc_prefix: '"%d-" % disc if disctotal and disctotal > 1 and track else ""'
+  num: '"%02d - " % track if track else ""'
+  titre: 'import os; return title if title else os.path.splitext(os.path.basename(path.decode("utf-8", "replace")))[0]'
+  fname: 'import os; return os.path.splitext(os.path.basename(path.decode("utf-8", "replace")))[0]'
+
+paths:
+  atrier:1: À trier/$origdir/$fname
+  va:1: Compilations/%if{$year,($year) }$album/$disc_prefix$num$titre
+  comp: Compilations/%if{$year,($year) }$album/$disc_prefix$num$titre
+  default: Artistes/$albumartist/%if{$year,($year) }$album/$disc_prefix$num$titre
+  singleton: À trier/Titres isolés/$artist - $title
+
+replace:
+  '[\\/]': _
+  '^\.': _
+  '[\x00-\x1f]': _
+  '[<>:"\?\*\|]': _
+  '[\.\s]+$': ''
+  '^\s+': ''

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__ — Annuaire</title>
+<style>
+:root{
+  --bg:#f6f5f2;--panel:#ffffff;--ink:#1d1d1f;--muted:#6b6b70;--line:#e3e1dc;
+  --accent:#3d4ea8;--accent-soft:#e8ebf8;--chip:#efede8;color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#141416;--panel:#1d1d21;--ink:#ececee;--muted:#9a9aa2;--line:#2c2c32;
+  --accent:#8fa0f0;--accent-soft:#252a45;--chip:#26262b;color-scheme:dark;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:16px clamp(16px,4vw,40px) 12px}
+h1{margin:0 0 4px;font-size:clamp(20px,3vw,28px);letter-spacing:-.01em}
+.stats{color:var(--muted);font-size:13px;margin-bottom:12px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+input[type=search]{flex:1 1 260px;min-width:0;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink);font:inherit}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{border:0;background:var(--panel);color:var(--muted);padding:9px 14px;font:inherit;cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.az{display:flex;flex-wrap:wrap;gap:2px;margin-top:10px}
+.az a{color:var(--muted);text-decoration:none;font-size:12px;padding:3px 6px;border-radius:6px}
+.az a:hover{background:var(--chip);color:var(--ink)}
+main{padding:12px clamp(16px,4vw,40px) 60px}
+.count{color:var(--muted);font-size:13px;margin:6px 0 14px}
+h2{font-size:18px;margin:26px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+h2 small{color:var(--muted);font-weight:400;font-size:13px;margin-left:6px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;cursor:pointer;transition:transform .12s ease,box-shadow .12s ease}
+.card:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.08)}
+.card:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.cover{aspect-ratio:1;width:100%;background:var(--chip);display:block;object-fit:cover}
+.meta{padding:8px 10px 10px}
+.al{font-weight:600;font-size:14px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sub{color:var(--muted);font-size:12px;margin-top:3px}
+dialog{border:1px solid var(--line);border-radius:14px;padding:0;max-width:min(760px,94vw);width:100%;background:var(--panel);color:var(--ink)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dh{display:flex;gap:16px;padding:18px;border-bottom:1px solid var(--line);align-items:flex-start}
+.dh img{width:140px;height:140px;border-radius:10px;object-fit:cover;flex:none;background:var(--chip)}
+.dh h3{margin:2px 0 4px;font-size:20px}
+.dh .sub{font-size:13px}
+.path{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--muted);word-break:break-all;margin-top:8px}
+.close{margin-left:auto;border:0;background:var(--chip);color:var(--ink);border-radius:8px;padding:6px 10px;cursor:pointer;font:inherit}
+.tl{max-height:60vh;overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:14px}
+td{padding:7px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+td.n{color:var(--muted);width:3.5em;font-variant-numeric:tabular-nums}
+td.d{color:var(--muted);text-align:right;width:4em;font-variant-numeric:tabular-nums}
+td.q{color:var(--muted);font-size:12px;white-space:nowrap;text-align:right}
+.ta{color:var(--muted);font-size:12px}
+.empty{color:var(--muted);padding:40px 0;text-align:center}
+@media (max-width:520px){.grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}.dh img{width:96px;height:96px}td.q{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="t"></h1>
+  <div class="stats" id="st"></div>
+  <div class="bar">
+    <input type="search" id="q" placeholder="Rechercher un artiste, un album ou un titre…" autocomplete="off">
+    <div class="seg" role="group" aria-label="Section">
+      <button data-s="" aria-pressed="true">Tout</button>
+      <button data-s="A" aria-pressed="false">Artistes</button>
+      <button data-s="C" aria-pressed="false">Compilations</button>
+    </div>
+  </div>
+  <nav class="az" id="az"></nav>
+</header>
+<main>
+  <div class="count" id="count"></div>
+  <div id="list"></div>
+</main>
+<dialog id="dlg"></dialog>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+const D = JSON.parse(document.getElementById('data').textContent);
+const A = D.albums, S = D.stats;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fold = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const url = p => p.split('/').map(encodeURIComponent).join('/');
+const dur = d => d ? `${Math.floor(d/60)}:${String(d%60).padStart(2,'0')}` : '';
+const letter = a => { const c = fold(a.ar).replace(/^the /,'')[0] || '#'; return /[a-z]/.test(c) ? c.toUpperCase() : '#'; };
+A.forEach((a, i) => { a.i = i; a.k = fold([a.ar, a.al, a.y, ...a.tr.map(t => t.t + ' ' + t.a)].join(' ')); a.L = a.s === 'C' ? 'Compilations' : letter(a); });
+document.getElementById('t').textContent = S.title;
+document.title = S.title + ' — Annuaire';
+document.getElementById('st').textContent =
+  `${S.artists} artistes · ${S.compils} compilations · ${S.albums} albums · ${S.tracks.toLocaleString('fr-FR')} pistes · ${S.hours.toLocaleString('fr-FR')} h d'écoute · mis à jour le ${S.date}`;
+let sec = '', q = '';
+function card(a) {
+  const img = a.c ? `<img class="cover" loading="lazy" src="${url(a.p)}/folder.jpg" alt="">` : `<div class="cover"></div>`;
+  const sub = a.s === 'C' ? [a.y, `${a.tr.length} pistes`] : [a.ar, a.y];
+  return `<div class="card" tabindex="0" data-i="${a.i}">${img}<div class="meta"><div class="al">${esc(a.al)}</div><div class="sub">${esc(sub.filter(Boolean).join(' · '))}</div></div></div>`;
+}
+function render() {
+  const words = fold(q).split(/\s+/).filter(Boolean);
+  const res = A.filter(a => (!sec || a.s === sec) && words.every(w => a.k.includes(w)));
+  document.getElementById('count').textContent = `${res.length} album${res.length > 1 ? 's' : ''}`;
+  const groups = new Map();
+  for (const a of res) { const g = a.s === 'C' ? 'Compilations' : a.ar; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(a); }
+  let html = '', seen = new Set();
+  for (const [g, list] of groups) {
+    const L = list[0].L, anchor = seen.has(L) ? '' : ` id="L-${L}"`; seen.add(L);
+    html += `<h2${anchor}>${esc(g)}<small>${list.length} album${list.length > 1 ? 's' : ''}</small></h2><div class="grid">${list.map(card).join('')}</div>`;
+  }
+  document.getElementById('list').innerHTML = html || '<p class="empty">Aucun résultat.</p>';
+  const letters = [...new Set(res.map(a => a.L))];
+  document.getElementById('az').innerHTML = letters.map(l => `<a href="#L-${l}">${l === 'Compilations' ? 'Compil.' : l}</a>`).join('');
+}
+function openAlbum(i) {
+  const a = A[i], dlg = document.getElementById('dlg');
+  const rows = a.tr.map(t => `<tr><td class="n">${esc(t.n)}</td><td>${esc(t.t)}${t.a && t.a !== a.ar ? `<div class="ta">${esc(t.a)}</div>` : ''}</td><td class="q">${esc(t.q)}</td><td class="d">${dur(t.d)}</td></tr>`).join('');
+  const total = a.tr.reduce((s, t) => s + t.d, 0);
+  dlg.innerHTML = `<div class="dh">${a.c ? `<img src="${url(a.p)}/folder.jpg" alt="">` : '<img alt="">'}<div><h3>${esc(a.al)}</h3>
+    <div class="sub">${esc([a.ar, a.y, `${a.tr.length} pistes`, total ? Math.round(total / 60) + ' min' : ''].filter(Boolean).join(' · '))}</div>
+    <div class="path">${esc(a.p)}</div></div><button class="close" aria-label="Fermer">✕</button></div>
+    <div class="tl"><table>${rows}</table></div>`;
+  dlg.querySelector('.close').onclick = () => dlg.close();
+  dlg.showModal();
+}
+document.getElementById('list').addEventListener('click', e => { const c = e.target.closest('.card'); if (c) openAlbum(+c.dataset.i); });
+document.getElementById('list').addEventListener('keydown', e => { const c = e.target.closest('.card'); if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openAlbum(+c.dataset.i); } });
+document.getElementById('dlg').addEventListener('click', e => { if (e.target.id === 'dlg') e.target.close(); });
+let tm; document.getElementById('q').addEventListener('input', e => { clearTimeout(tm); tm = setTimeout(() => { q = e.target.value; render(); }, 150); });
+document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
+  sec = b.dataset.s; document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', x === b)); render();
+});
+render();
+</script>
+</body>
+</html>

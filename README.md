@@ -14,6 +14,8 @@ avec [beets](https://beets.io).
    Pas de doublons ni de `.1` : une piste dont le fichier existe déjà à destination, ou identique
    (contenu) à un fichier de la bibliothèque ou à un autre fichier déposé, n'est pas ajoutée ; elle est
    mise de côté dans `Candidats/_déjà présents/`. Une piste manquante d'un album existant est ajoutée.
+   La comparaison se fait par empreinte BLAKE2, uniquement entre fichiers de même taille ; les empreintes
+   de la bibliothèque sont gardées en cache dans `~/.config/beets/empreintes.db`.
 5. Pochette `folder.jpg` : intégrée → image déposée → Deezer → iTunes → Cover Art Archive → Discogs → générée.
 6. Régénération de `Annuaire.html` / `Annuaire.csv` dans chaque bibliothèque.
 
@@ -24,6 +26,7 @@ avec [beets](https://beets.io).
 ./list_songs                  # rangement réel
 ./list_songs --sans-internet  # pochettes sans recherche en ligne
 ./list_songs --sans-pochettes
+./list_songs --empreintes      # calcule d'avance les empreintes de toute la bibliothèque (facultatif)
 ```
 
 Variables d'environnement : `RANGER_ROOT` (dossier `musics/` contenant `Candidats` et les bibliothèques), `RANGER_HOME`.

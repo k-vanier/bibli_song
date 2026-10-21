@@ -21,7 +21,7 @@ Usage :
   list_songs --simulation     montre ce qui serait fait, sans rien ranger
   list_songs --sans-internet  pas de recherche de pochette en ligne
 """
-import argparse, colorsys, datetime, fcntl, filecmp, hashlib, io, json, os, re, shutil, subprocess, sys
+import argparse, colorsys, datetime, fcntl, hashlib, io, json, os, re, shutil, sqlite3, subprocess, sys
 import tempfile, textwrap, threading, time, urllib.parse, urllib.request
 from collections import Counter, defaultdict
 
@@ -44,6 +44,7 @@ LIBS = {
                stage=os.path.join(STAGE, 'hi')),
 }
 JOURNAL = HOME + '/.config/beets/journal'
+EMPREINTES = HOME + '/.config/beets/empreintes.db'
 ANNUAIRE = HOME + '/.config/beets/annuaire/annuaire.py'
 DISCOGS_TOKEN = HOME + '/discog'
 LOW_EXT = ('.mp3',)
@@ -65,7 +66,8 @@ class Spinner:
     def __init__(self):
         self.on = sys.stderr.isatty()
         self.text = ''
-        self.t0 = time.time()
+        self.t0 = self.since = time.time()
+        self.durations = []
         self.lock = threading.Lock()
         if self.on:
             threading.Thread(target=self._run, daemon=True).start()
@@ -84,7 +86,10 @@ class Spinner:
 
     def set(self, text):
         with self.lock:
-            self.text = text
+            now = time.time()
+            if self.text:
+                self.durations.append((self.text, now - self.since))
+            self.text, self.since = text, now
             if not text:
                 self.clear()
 
@@ -142,6 +147,64 @@ def audio_files(top):
 
 
 # --------------------------------------------------------------------------- 1. aiguillage
+
+def rows(db, query, args=()):
+    """Lecture directe de la base beets (bien plus rapide que de charger toutes les pistes)."""
+    con = sqlite3.connect(db)
+    try:
+        return con.execute(query, args).fetchall()
+    finally:
+        con.close()
+
+
+def lib_paths(db, exclude=()):
+    """(id, chemin) de toutes les pistes de la base, sauf les id exclus."""
+    return [(i, bytes(p)) for i, p in rows(db, 'select id, path from items') if i not in exclude]
+
+
+class Empreintes:
+    """Cache des empreintes BLAKE2 des fichiers (chemin, taille, date de modification → empreinte) :
+    un fichier n'est relu que s'il est nouveau ou a changé."""
+
+    def __init__(self, path):
+        self.con = sqlite3.connect(path)
+        self.con.execute('create table if not exists f (path blob primary key, size int, mtime int, hash text)')
+        self.memo = {}
+
+    @staticmethod
+    def compute(p):
+        h = hashlib.blake2b(digest_size=20)
+        with open(p, 'rb') as fh:
+            for chunk in iter(lambda: fh.read(4 << 20), b''):
+                h.update(chunk)
+        return h.hexdigest()
+
+    def get(self, p, store=True):
+        p = p if isinstance(p, bytes) else os.fsencode(p)
+        if p in self.memo:
+            return self.memo[p]
+        st = os.stat(p)
+        row = self.con.execute('select size, mtime, hash from f where path = ?', (p,)).fetchone()
+        if row and row[0] == st.st_size and row[1] == st.st_mtime_ns:
+            h = row[2]
+        else:
+            h = self.compute(p)
+            if store:
+                self.con.execute('insert or replace into f values (?, ?, ?, ?)', (p, st.st_size, st.st_mtime_ns, h))
+        self.memo[p] = h
+        return h
+
+    def record(self, p, h):
+        p = p if isinstance(p, bytes) else os.fsencode(p)
+        st = os.stat(p)
+        self.con.execute('insert or replace into f values (?, ?, ?, ?)', (p, st.st_size, st.st_mtime_ns, h))
+
+    def commit(self):
+        self.con.commit()
+
+
+EMP = None
+
 
 def hidden(rel):
     return any(seg.startswith(('_', '.')) for seg in rel.split(os.sep) if seg != '.')
@@ -259,12 +322,22 @@ def from_path(origdir):
     return artist, album, yr, disc, False
 
 
-def fix_metadata(lib, cand_dir):
+def lot(lib, ids):
+    """Pistes du lot courant, par leur id (une requête beets sur l'attribut « lot » parcourt toute la base)."""
+    return [it for it in (lib.get_item(i) for i in sorted(ids)) if it is not None]
+
+
+class Old:
+    def __init__(self, albumartist, album, year):
+        self.albumartist, self.album, self.year = albumartist or '', album or '', year or 0
+
+
+def fix_metadata(lib, db, ids, cand_dir):
     """Complète et harmonise les métadonnées des pistes du lot courant (dans la base seulement)."""
-    batch = list(lib.items(f'lot:{LOT}'))
+    batch = lot(lib, ids)
     if not batch:
         return 0
-    old = [i for i in lib.items() if i.get('lot') != LOT]
+    old = [Old(*r[1:]) for r in rows(db, 'select id, albumartist, album, year from items') if r[0] not in ids]
     known_artists = {}
     for i in old:
         if i.albumartist:
@@ -323,7 +396,7 @@ def fix_metadata(lib, cand_dir):
 
     # année, nombre de disques et disques déduits des sous-dossiers, par album
     grp = defaultdict(list)
-    for it in lib.items(f'lot:{LOT}'):
+    for it in lot(lib, ids):
         grp[(it.albumartist, it.album.lower())].append(it)
     for its in grp.values():
         yrs = Counter(i.year for i in its if i.year)
@@ -342,7 +415,7 @@ def fix_metadata(lib, cand_dir):
             i.store()
 
     # cohérence des albums beets avec leurs pistes (un album beets = un dossier déposé)
-    for aid in {i.album_id for i in lib.items(f'lot:{LOT}') if i.album_id}:
+    for aid in {i.album_id for i in lot(lib, ids) if i.album_id}:
         a = lib.get_album(aid)
         if a is None:
             continue
@@ -360,16 +433,16 @@ def fix_metadata(lib, cand_dir):
 
     # entrées pointant vers un fichier déjà référencé (liens physiques) : on garde la première
     seen = {}
-    for it in lib.items():
+    for iid, path in sorted(lib_paths(db), key=lambda r: r[0] in ids):
         try:
-            st = os.stat(it.path)
+            st = os.stat(path)
         except FileNotFoundError:
             continue
         k = (st.st_dev, st.st_ino)
-        if k in seen and it.get('lot') == LOT:
-            it.remove(delete=False, with_album=True)
+        if k in seen and iid in ids:
+            lib.get_item(iid).remove(delete=False, with_album=True); ids.discard(iid)
         else:
-            seen.setdefault(k, it.id)
+            seen.setdefault(k, iid)
     return len(batch)
 
 
@@ -515,11 +588,11 @@ def cover_generated(folder, artist, album, year):
     say(f'    pochette (générée) : {folder}')
 
 
-def covers(lib, cand_dir, internet):
+def covers(lib, ids, cand_dir, internet):
     token = open(DISCOGS_TOKEN).read().strip() if internet and os.path.exists(DISCOGS_TOKEN) else ''
     folders = defaultdict(set)
     info = {}
-    for it in lib.items(f'lot:{LOT}'):
+    for it in lot(lib, ids):
         f = os.path.dirname(it.path.decode('utf-8', 'replace'))
         folders[f].add(os.path.join(cand_dir, it.get('origdir') or ''))
         info[f] = (it.albumartist, it.album, it.year)
@@ -565,67 +638,72 @@ def process(key, args):
     else:
         shutil.copy(os.path.join(beetsdir, 'library.db'), f'{JOURNAL}/{key}_library_avant_{LOT}.db')
         # entrées laissées par un lancement interrompu (fichiers revenus depuis dans Candidats)
-        old = Library(os.path.join(beetsdir, 'library.db'))
-        for it in old.items():
-            if it.path.decode('utf-8', 'replace').startswith(STAGE + '/'):
-                it.remove(delete=False, with_album=True)
+        stale = [i for i, p in lib_paths(os.path.join(beetsdir, 'library.db')) if p.startswith(os.fsencode(STAGE + '/'))]
+        if stale:
+            old = Library(os.path.join(beetsdir, 'library.db'))
+            for i in stale:
+                old.get_item(i).remove(delete=False, with_album=True)
 
     SPIN.set(f'{lib_cfg["nom"]} : indexation de {len(files)} fichier(s) par beets')
     out = beet(beetsdir, 'import', '-q', '-A', '-C', '-W', '--set', f'lot={LOT}', *tops, capture=True)
     unreadable = [l.split('unreadable file: ', 1)[1] for l in out.splitlines() if 'unreadable file: ' in l]
     config.clear(); config.read()
-    lib = Library(os.path.join(beetsdir, 'library.db'))
+    db = os.path.join(beetsdir, 'library.db')
+    lib = Library(db)
+    ids = {i for i, p in lib_paths(db) if p.startswith(os.fsencode(cand + '/'))}
     # formats qui n'appartiennent pas à cette bibliothèque (ne devrait pas arriver après l'aiguillage)
-    for it in lib.items(f'lot:{LOT}'):
+    for it in lot(lib, ids):
         ext = os.path.splitext(it.path.decode('utf-8', 'replace'))[1].lower()
         if (key == 'low') != (ext in LOW_EXT):
-            it.remove(delete=False, with_album=True)
+            it.remove(delete=False, with_album=True); ids.discard(it.id)
     # déjà présent : contenu identique à un fichier de la bibliothèque, ou au même fichier déposé deux fois.
     # Fait avant la complétion des métadonnées, pour que les copies écartées ne comptent pas comme des CD.
     SPIN.set(f'{lib_cfg["nom"]} : recherche des musiques déjà présentes')
+    # seuls les fichiers de même taille sont comparés, par empreinte (gardée en cache pour la bibliothèque)
     by_size = defaultdict(list)
-    for i in lib.items():
-        if i.get('lot') == LOT:
-            continue
+    for _, p in lib_paths(db, exclude=ids):
         try:
-            by_size[os.path.getsize(i.path)].append(i.path)
+            by_size[os.path.getsize(p)].append(p)
         except OSError:
             pass
-    deja, batch_size = [], defaultdict(list)
-    for it in list(lib.items(f'lot:{LOT}')):
+    deja, batch_size, new_hash = [], defaultdict(list), {}
+    for it in lot(lib, ids):
         src = it.path.decode('utf-8', 'replace')
         size = os.path.getsize(src)
-        other = next((o for o in by_size.get(size, []) if filecmp.cmp(src, o, shallow=False)), None)
-        if other:
-            deja.append((it, src, os.path.relpath(os.path.dirname(other.decode('utf-8', 'replace')), lib_cfg['dir'])))
-            continue
-        twin = next((o for o in batch_size[size] if filecmp.cmp(src, o, shallow=False)), None)
-        if twin:
-            deja.append((it, src, os.path.join(CANDIDATS, os.path.relpath(os.path.dirname(twin), cand))))
-            continue
+        if by_size.get(size) or batch_size.get(size):
+            h = new_hash[src] = EMP.get(src, store=False)
+            other = next((o for o in by_size.get(size, []) if EMP.get(o) == h), None)
+            if other:
+                deja.append((it, src, os.path.relpath(os.path.dirname(other.decode('utf-8', 'replace')), lib_cfg['dir'])))
+                continue
+            twin = next((o for o in batch_size[size] if EMP.get(o, store=False) == h), None)
+            if twin:
+                deja.append((it, src, os.path.join(CANDIDATS, os.path.relpath(os.path.dirname(twin), cand))))
+                continue
         batch_size[size].append(src)
+    EMP.commit()
     for it, src, _ in deja:
-        it.remove(delete=False, with_album=True)
+        it.remove(delete=False, with_album=True); ids.discard(it.id)
 
     SPIN.set(f'{lib_cfg["nom"]} : complétion des métadonnées')
-    n = fix_metadata(lib, cand)
+    n = fix_metadata(lib, db, ids, cand)
     say(f'  {n + len(deja)} piste(s) indexée(s), {len(unreadable)} illisible(s) par beets')
 
     SPIN.set(f'{lib_cfg["nom"]} : calcul des nouveaux emplacements')
-    preview = beet(beetsdir, 'move', '-p', f'lot:{LOT}', capture=True)
+    preview = beet(beetsdir, 'move', '-p', f'path:{cand}', capture=True)
     lines = [re.sub(r'\x1b\[[0-9;]*m', '', l) for l in preview.splitlines()]
     dest_of = {lines[i - 1].rstrip(): l.split(' -> ', 1)[1].strip()
                for i, l in enumerate(lines) if l.startswith('  -> ') and i > 0}
 
     # même nom de fichier déjà à destination : on n'ajoute rien, jamais de .1 / .2
     taken = set()
-    for it in list(lib.items(f'lot:{LOT}')):
+    for it in lot(lib, ids):
         src = it.path.decode('utf-8', 'replace')
         dest = dest_of.get(src, src)
         if os.path.exists(dest) or dest in taken:
             deja.append((it, src, os.path.relpath(os.path.dirname(dest), lib_cfg['dir'])))
             dest_of.pop(src, None)
-            it.remove(delete=False, with_album=True)
+            it.remove(delete=False, with_album=True); ids.discard(it.id)
         else:
             taken.add(dest)
     for a, c in sorted(Counter(d for _, _, d in deja).items()):
@@ -641,24 +719,29 @@ def process(key, args):
         shutil.rmtree(tmp, ignore_errors=True)
         return dict(pistes=len(dest_of), albums=len(albums), illisibles=len(unreadable), deja=len(deja))
 
-    before = {i.id: i.path for i in lib.items(f'lot:{LOT}')}
+    before = {i.id: i.path for i in lot(lib, ids)}
     SPIN.set(f'{lib_cfg["nom"]} : déplacement des fichiers')
-    beet(beetsdir, 'move', f'lot:{LOT}', capture=True)
-    lib = Library(os.path.join(beetsdir, 'library.db'))
+    beet(beetsdir, 'move', f'path:{cand}', capture=True)
+    lib = Library(db)
+    moved_items = lot(lib, ids)
     albums = Counter(os.path.relpath(os.path.dirname(i.path.decode('utf-8', 'replace')), lib_cfg['dir'])
-                     for i in lib.items(f'lot:{LOT}'))
+                     for i in moved_items)
     with open(f'{JOURNAL}/ranger_{LOT}_{key}.tsv', 'w', encoding='utf-8') as j:
-        for it in lib.items(f'lot:{LOT}'):
-            j.write(f"{before.get(it.id, b'').decode('utf-8', 'replace')}\t{it.path.decode('utf-8', 'replace')}\n")
+        for it in moved_items:
+            old_p, new_p = before.get(it.id, b'').decode('utf-8', 'replace'), it.path.decode('utf-8', 'replace')
+            j.write(f"{old_p}\t{new_p}\n")
+            if old_p in new_hash and os.path.exists(new_p):
+                EMP.record(new_p, new_hash[old_p])  # empreinte déjà calculée : on la garde pour la suite
+    EMP.commit()
 
     # fichiers illisibles : placés à côté de leurs pistes sœurs
     by_od = {}
-    for it in lib.items(f'lot:{LOT}'):
+    for it in moved_items:
         by_od.setdefault(it.get('origdir'), os.path.dirname(it.path.decode('utf-8', 'replace')))
     lib_inodes = set()
-    for it in lib.items():
+    for _, p in lib_paths(db):
         try:
-            lib_inodes.add(os.stat(it.path).st_ino)
+            lib_inodes.add(os.stat(p).st_ino)
         except FileNotFoundError:
             pass
     SPIN.set(f'{lib_cfg["nom"]} : fichiers illisibles')
@@ -677,7 +760,7 @@ def process(key, args):
             say(f'  illisible placé avec son album : {dest}')
         else:
             left.append(os.path.join(CAND, os.path.relpath(p, cand)))
-    stats = covers(lib, cand, not args.sans_internet) if not args.sans_pochettes else Counter()
+    stats = covers(lib, ids, cand, not args.sans_internet) if not args.sans_pochettes else Counter()
     SPIN.set(f'{lib_cfg["nom"]} : nettoyage des dossiers vides')
     # nettoyage : dossiers devenus vides dans la bibliothèque
     for folder, dirs, fs in os.walk(lib_cfg['dir'], topdown=False):
@@ -687,12 +770,36 @@ def process(key, args):
                 deja=len(deja))
 
 
+def build_hashes():
+    paths = [p for lib in LIBS.values() for _, p in lib_paths(lib['beetsdir'] + '/library.db')]
+    t0, done = time.time(), 0
+    for k, p in enumerate(paths, 1):
+        if k % 50 == 0 or k == len(paths):
+            rest = (time.time() - t0) / max(done, 1) * (len(paths) - k) if done else 0
+            SPIN.set(f'Empreintes {k}/{len(paths)}' + (f', reste ~{int(rest) // 60} min' if done else ''))
+        try:
+            row = EMP.con.execute('select size, mtime from f where path = ?', (p,)).fetchone()
+            st = os.stat(p)
+            if not (row and row[0] == st.st_size and row[1] == st.st_mtime_ns):
+                EMP.get(p); done += 1
+        except OSError:
+            pass
+        if k % 200 == 0:
+            EMP.commit()
+    EMP.commit()
+    SPIN.set('')
+    n = EMP.con.execute('select count(*) from f').fetchone()[0]
+    say(f'{done} empreinte(s) calculée(s), {n} au total dans {EMPREINTES}')
+
+
 def main():
-    global LOGF
+    global LOGF, EMP
     ap = argparse.ArgumentParser(description='Range la musique déposée dans musics/Candidats.')
     ap.add_argument('--simulation', action='store_true', help='montre ce qui serait fait, sans rien ranger')
     ap.add_argument('--sans-internet', action='store_true', help='pas de recherche de pochette en ligne')
     ap.add_argument('--sans-pochettes', action='store_true', help='ne pose aucune pochette')
+    ap.add_argument('--empreintes', action='store_true',
+                    help="calcule d'avance l'empreinte de chaque fichier des bibliothèques (long la première fois), puis s'arrête")
     args = ap.parse_args()
     os.makedirs(JOURNAL, exist_ok=True)
     lock = open(f'{JOURNAL}/.ranger.lock', 'w')
@@ -700,6 +807,10 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         sys.exit('Un rangement est déjà en cours.')
+    EMP = Empreintes(EMPREINTES)
+    if args.empreintes:
+        build_hashes()
+        return
     if not args.simulation:
         LOGF = open(f'{JOURNAL}/ranger_{LOT}.log', 'w', encoding='utf-8')
     say(f'Rangement {LOT}' + (' — SIMULATION, rien ne sera rangé' if args.simulation else ''))
@@ -743,6 +854,12 @@ def main():
         say(line)
         for p in r.get('restants', []):
             say(f'    non rangé (illisible, sans album) : {os.path.relpath(p, CAND)}')
+    slow = sorted(SPIN.durations, key=lambda d: -d[1])[:8]
+    if LOGF and slow:
+        LOGF.write('\nÉtapes les plus longues :\n' + ''.join(f'  {int(d) // 60}:{int(d) % 60:02d}  {t}\n' for t, d in slow))
+    if os.environ.get('RANGER_DUREES'):
+        for t, d in slow:
+            say(f'  {int(d) // 60}:{int(d) % 60:02d}  {t}')
     if not args.simulation:
         say(f'\nJournal : {JOURNAL}/ranger_{LOT}.log')
 

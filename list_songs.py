@@ -805,11 +805,113 @@ def build_hashes(force=False, extra=()):
     return {p: EMP.get(p) for p in sizes}
 
 
+def regen_annuaires(keys):
+    if not os.path.exists(ANNUAIRE):
+        return
+    say('\n--- Mise à jour des annuaires')
+    for k in keys:
+        lib = LIBS[k]
+        SPIN.set(f'Annuaire {lib["nom"]}')
+        r = subprocess.run([sys.executable, ANNUAIRE, lib['dir'], lib['beetsdir'] + '/library.db', lib['nom']],
+                           env=dict(os.environ, PYTHONPATH='/usr/share/beets'), text=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        for l in r.stdout.splitlines():
+            say('  ' + l)
+    SPIN.set('')
+
+
+def resolve(arg):
+    """Chemin donné par l'utilisateur → (bibliothèque, chemin absolu). Accepte un chemin absolu, relatif à
+    musics/ (« Musiques Hi-Res/Artistes/… ») ou relatif à une bibliothèque (« Artistes/… »)."""
+    arg = arg.rstrip('/')
+    tries = [arg] if os.path.isabs(arg) else [os.path.join(ROOT, arg)] + [os.path.join(l['dir'], arg) for l in LIBS.values()]
+    found = {}
+    for p in tries:
+        p = os.path.normpath(p)
+        for k, lib in LIBS.items():
+            rel = os.path.relpath(p, lib['dir'])
+            if not rel.startswith('..') and os.path.exists(p):
+                parts = rel.split(os.sep)
+                if rel == '.' or len(parts) < 2 or parts[0] not in ('Artistes', 'Compilations', 'À trier'):
+                    sys.exit(f'Refusé, trop large : {p}\n(il faut au moins un artiste ou un album, '
+                             f'par exemple « Artistes/<Artiste> » ou « Compilations/<Album> »)')
+                found[p] = k
+    if not found:
+        sys.exit(f'Introuvable dans les bibliothèques : {arg}')
+    if len(found) > 1:
+        sys.exit(f'« {arg} » existe dans les deux bibliothèques, précisez laquelle :\n'
+                 + '\n'.join(f'  {os.path.relpath(p, ROOT)}' for p in found))
+    (p, k), = found.items()
+    return k, p
+
+
+def retirer(args):
+    """Supprime proprement des morceaux ou des albums : fichiers, entrées de la base et du cache, annuaire."""
+    targets = [resolve(a) for a in args.retirer]
+    plan = defaultdict(lambda: {'audio': [], 'autres': [], 'ids': []})
+    for k, p in targets:
+        files = [p] if os.path.isfile(p) else [os.path.join(f, x) for f, _, xs in os.walk(p) for x in xs]
+        audio = [f for f in files if f.lower().endswith(AUDIO_EXT)]
+        others = [f for f in files if f not in audio]
+        # un dossier d'album qui n'aurait plus de musique : on retire aussi sa pochette et ses fichiers annexes
+        for d in {os.path.dirname(f) for f in audio}:
+            rest = [x for x in os.listdir(d) if os.path.join(d, x) not in audio]
+            if not any(x.lower().endswith(AUDIO_EXT) for x in rest) and not any(os.path.isdir(os.path.join(d, x)) for x in rest):
+                others += [os.path.join(d, x) for x in rest if os.path.join(d, x) not in others]
+        pref = os.fsencode(p)
+        ids = [i for i, q in lib_paths(LIBS[k]['beetsdir'] + '/library.db') if q == pref or q.startswith(pref + b'/')]
+        plan[k]['audio'] += audio; plan[k]['autres'] += others; plan[k]['ids'] += ids
+    total = sum(os.path.getsize(f) for pl in plan.values() for f in pl['audio'] + pl['autres'])
+    for k, pl in plan.items():
+        say(f'\n{LIBS[k]["nom"]} : {len(pl["audio"])} morceau(x), {len(pl["autres"])} autre(s) fichier(s), '
+            f'{len(pl["ids"])} entrée(s) de la base')
+        shown = sorted(pl['audio'] + pl['autres'])
+        for f in shown[:30]:
+            say('  ' + os.path.relpath(f, LIBS[k]['dir']))
+        if len(shown) > 30:
+            say(f'  … et {len(shown) - 30} autre(s)')
+    say(f'\nTotal : {total / 1e9:.2f} Go')
+    if args.simulation:
+        say('SIMULATION : rien n\'a été supprimé.')
+        return
+    if not args.oui:
+        if not sys.stdin.isatty():
+            sys.exit('Confirmation impossible sans terminal : relancez avec --oui pour confirmer.')
+        if input('\nSupprimer définitivement ces fichiers ? (o/N) ').strip().lower() not in ('o', 'oui', 'y', 'yes'):
+            say('Annulé, rien n\'a été supprimé.')
+            return
+    global LOGF
+    LOGF = open(f'{JOURNAL}/retrait_{LOT}.log', 'w', encoding='utf-8')
+    for k, pl in plan.items():
+        lib = LIBS[k]
+        db = lib['beetsdir'] + '/library.db'
+        shutil.copy(db, f'{JOURNAL}/{k}_library_avant_retrait_{LOT}.db')
+        blib = Library(db)
+        for i in pl['ids']:
+            it = blib.get_item(i)
+            if it:
+                it.remove(delete=False, with_album=True)
+        for f in pl['audio'] + pl['autres']:
+            if os.path.lexists(f):
+                os.remove(f)
+                LOGF.write(f'supprimé\t{f}\n')
+        EMP.con.executemany('delete from f where path = ?', [(os.fsencode(f),) for f in pl['audio']])
+        EMP.commit()
+        # dossiers devenus vides, en remontant jusqu'à Artistes / Compilations (jamais au-delà)
+        for d in sorted({os.path.dirname(f) for f in pl['audio'] + pl['autres']} | {p for kk, p in targets if kk == k},
+                        key=len, reverse=True):
+            while os.path.isdir(d) and not os.listdir(d) and len(os.path.relpath(d, lib['dir']).split(os.sep)) >= 2:
+                os.rmdir(d); d = os.path.dirname(d)
+        say(f'{lib["nom"]} : {len(pl["audio"]) + len(pl["autres"])} fichier(s) supprimé(s), {len(pl["ids"])} entrée(s) retirée(s) de la base')
+    regen_annuaires(list(plan))
+    say(f'\nJournal : {JOURNAL}/retrait_{LOT}.log')
+
+
 def verification(simulation):
     """Recalcule toutes les empreintes et contrôle les deux bibliothèques. Ne touche à aucun fichier de musique :
     seules les entrées de la base dont le fichier a disparu et les entrées périmées du cache sont retirées."""
     report = f'{JOURNAL}/verification_{LOT}.tsv'
-    out, all_untracked = [], []
+    out, all_untracked, changed = [], [], []
     say('\n--- Base beets et disque')
     for key, lib in LIBS.items():
         db = lib['beetsdir'] + '/library.db'
@@ -828,6 +930,7 @@ def verification(simulation):
             if audio and 'folder.jpg' not in files:
                 nocover.append(folder)
         if missing and not simulation:
+            changed.append(key)
             shutil.copy(db, f'{JOURNAL}/{key}_library_avant_verification_{LOT}.db')
             blib = Library(db)
             for i, _ in missing:
@@ -864,6 +967,8 @@ def verification(simulation):
         out.append(('reste d\'un rangement interrompu', CANDIDATS, STAGE))
         say(f'\n  {n} fichier(s) dans {STAGE} : reste d\'un rangement interrompu, ils reviendront dans {CANDIDATS} au prochain lancement')
 
+    if changed:
+        regen_annuaires(changed)
     with open(report, 'w', encoding='utf-8') as fh:
         fh.write('problème\tbibliothèque\tchemin\n')
         for row in out:
@@ -879,6 +984,10 @@ def main():
     ap.add_argument('--sans-pochettes', action='store_true', help='ne pose aucune pochette')
     ap.add_argument('--empreintes', action='store_true',
                     help="calcule d'avance l'empreinte de chaque fichier des bibliothèques (long la première fois), puis s'arrête")
+    ap.add_argument('--retirer', nargs='+', metavar='CHEMIN',
+                    help='supprime proprement un ou plusieurs morceaux ou albums (fichiers, base, cache, annuaire), '
+                         'après confirmation ; chemin relatif à la bibliothèque, ex. « Artistes/X/(2004) Album »')
+    ap.add_argument('--oui', action='store_true', help='avec --retirer : ne pas demander de confirmation')
     ap.add_argument('--verification', action='store_true',
                     help='recalcule toutes les empreintes sans le cache et vérifie les bibliothèques (base, disque, '
                          'doublons, pochettes), puis s\'arrête ; avec --simulation, ne corrige rien')
@@ -892,6 +1001,9 @@ def main():
     EMP = Empreintes(EMPREINTES)
     if args.empreintes:
         build_hashes()
+        return
+    if args.retirer:
+        retirer(args)
         return
     if args.verification:
         LOGF = open(f'{JOURNAL}/verification_{LOT}.log', 'w', encoding='utf-8')
@@ -919,15 +1031,8 @@ def main():
                 os.rmdir(folder)
     for p in kept:
         say(f'  resté dans le dossier de travail (même nom déjà dans {CANDIDATS}/) : {p}')
-    if not args.simulation and any(results.values()) and os.path.exists(ANNUAIRE):
-        say('\n--- Mise à jour des annuaires')
-        for k, lib in LIBS.items():
-            SPIN.set(f'Annuaire {lib["nom"]}')
-            r = subprocess.run([sys.executable, ANNUAIRE, lib['dir'], lib['beetsdir'] + '/library.db', lib['nom']],
-                               env=dict(os.environ, PYTHONPATH='/usr/share/beets'), text=True,
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            for l in r.stdout.splitlines():
-                say('  ' + l)
+    if not args.simulation and any(results.values()):
+        regen_annuaires(LIBS)
     SPIN.set('')
     say('\n=== Bilan')
     for k, r in results.items():

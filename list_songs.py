@@ -19,8 +19,8 @@ Usage :
   list_songs --simulation     montre ce qui serait fait, sans rien déplacer
   list_songs --sans-internet  pas de recherche de pochette en ligne
 """
-import argparse, colorsys, datetime, fcntl, hashlib, io, json, os, re, shutil, subprocess, sys
-import tempfile, textwrap, time, urllib.parse, urllib.request
+import argparse, colorsys, datetime, fcntl, filecmp, hashlib, io, json, os, re, shutil, subprocess, sys
+import tempfile, textwrap, threading, time, urllib.parse, urllib.request
 from collections import Counter, defaultdict
 
 sys.path.insert(0, '/usr/share/beets')
@@ -46,14 +46,55 @@ OTHER_LOSSY = ('.wma', '.ogg', '.opus', '.aac', '.mpc')
 AUDIO_EXT = LOW_EXT + HI_EXT + OTHER_LOSSY + ('.m4a',)
 UA = 'list_songs/1.0 (bibliotheque musicale personnelle)'
 MINW = 500
+DEJA = '_déjà présents'
 
 LOT = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
 LOGF = None
 
 
+class Spinner:
+    """Ligne animée en bas de l'écran (étape en cours + temps écoulé), seulement dans un terminal."""
+    FRAMES = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+
+    def __init__(self):
+        self.on = sys.stderr.isatty()
+        self.text = ''
+        self.t0 = time.time()
+        self.lock = threading.Lock()
+        if self.on:
+            threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        i = 0
+        while True:
+            with self.lock:
+                if self.text:
+                    e = int(time.time() - self.t0)
+                    width = shutil.get_terminal_size().columns
+                    line = f'{self.FRAMES[i % len(self.FRAMES)]} {self.text}  ({e // 60}:{e % 60:02d})'
+                    sys.stderr.write('\r\033[K' + line[:width - 1]); sys.stderr.flush()
+            i += 1
+            time.sleep(0.1)
+
+    def set(self, text):
+        with self.lock:
+            self.text = text
+            if not text:
+                self.clear()
+
+    def clear(self):
+        if self.on:
+            sys.stderr.write('\r\033[K'); sys.stderr.flush()
+
+
+SPIN = Spinner()
+
+
 def say(*a):
     msg = ' '.join(str(x) for x in a)
-    print(msg, flush=True)
+    with SPIN.lock:
+        SPIN.clear()
+        print(msg, flush=True)
     if LOGF:
         LOGF.write(msg + '\n'); LOGF.flush()
 
@@ -196,7 +237,7 @@ def fix_metadata(lib, cand_dir):
         if norm(a) in known_artists:
             return known_artists[norm(a)]
         b = FEAT.sub('', a)
-        for sep in (' & ', ' vs. ', ' vs ', ' x ', ', ', ' and ', ' et '):
+        for sep in (' & ', ' vs. ', ' vs ', ' x ', ', ', ' and ', ' et ', '/'):
             first = b.split(sep)[0]
             if norm(first) in known_artists:
                 return known_artists[norm(first)]
@@ -227,6 +268,8 @@ def fix_metadata(lib, cand_dir):
         if m:
             it.album = m.group(2).strip(); it.year = it.year or int(m.group(1))
         it.albumartist = canon_artist(it.albumartist or it.artist)
+        if not it.albumartist:
+            it.albumartist = 'Artiste inconnu'
         va = it.albumartist == 'Various Artists' or bool(it.comp)
         it.comp = va; it['va'] = 1 if va else 0; it['atrier'] = 0
         k = (norm(it.albumartist), it.album.lower().strip())
@@ -437,7 +480,8 @@ def covers(lib, cand_dir, internet):
         folders[f].add(os.path.join(cand_dir, it.get('origdir') or ''))
         info[f] = (it.albumartist, it.album, it.year)
     stats = Counter()
-    for f, srcs in sorted(folders.items()):
+    for k, (f, srcs) in enumerate(sorted(folders.items()), 1):
+        SPIN.set(f'Pochettes {k}/{len(folders)} : {os.path.basename(f)}')
         if os.path.exists(os.path.join(f, 'folder.jpg')) or not os.path.isdir(f):
             continue
         aa, al, yr = info[f]
@@ -458,6 +502,7 @@ def process(key, args):
     lib_cfg = LIBS[key]
     cand = os.path.join(lib_cfg['dir'], CANDIDATS)
     os.makedirs(cand, exist_ok=True)
+    SPIN.set(f'{lib_cfg["nom"]} : recherche des fichiers dans {CANDIDATS}/')
     tops = [os.path.join(cand, e) for e in sorted(os.listdir(cand)) if not e.startswith('_')]
     files = [p for p in audio_files(cand)
              if p.lower().endswith(LOW_EXT if key == 'low' else HI_EXT + ('.m4a',))]
@@ -477,6 +522,7 @@ def process(key, args):
     else:
         shutil.copy(os.path.join(beetsdir, 'library.db'), f'{JOURNAL}/{key}_library_avant_{LOT}.db')
 
+    SPIN.set(f'{lib_cfg["nom"]} : indexation de {len(files)} fichier(s) par beets')
     out = beet(beetsdir, 'import', '-q', '-A', '-C', '-W', '--set', f'lot={LOT}', *tops, capture=True)
     unreadable = [l.split('unreadable file: ', 1)[1] for l in out.splitlines() if 'unreadable file: ' in l]
     config.clear(); config.read()
@@ -486,21 +532,60 @@ def process(key, args):
         ext = os.path.splitext(it.path.decode('utf-8', 'replace'))[1].lower()
         if (key == 'low') != (ext in LOW_EXT):
             it.remove(delete=False, with_album=True)
+    SPIN.set(f'{lib_cfg["nom"]} : complétion des métadonnées')
     n = fix_metadata(lib, cand)
     say(f'  {n} piste(s) indexée(s), {len(unreadable)} illisible(s) par beets')
 
+    SPIN.set(f'{lib_cfg["nom"]} : calcul des nouveaux emplacements')
     preview = beet(beetsdir, 'move', '-p', f'lot:{LOT}', capture=True)
-    dests = [l.split(' -> ', 1)[1].strip() for l in preview.splitlines() if l.startswith('  -> ')]
-    albums = Counter(os.path.relpath(os.path.dirname(d), lib_cfg['dir']) for d in dests)
+    lines = [re.sub(r'\x1b\[[0-9;]*m', '', l) for l in preview.splitlines()]
+    dest_of = {lines[i - 1].rstrip(): l.split(' -> ', 1)[1].strip()
+               for i, l in enumerate(lines) if l.startswith('  -> ') and i > 0}
+
+    # déjà dans la bibliothèque (dossier d'album existant ou fichier identique) : on n'ajoute rien
+    SPIN.set(f'{lib_cfg["nom"]} : recherche des musiques déjà présentes')
+    by_size = defaultdict(list)
+    for i in lib.items():
+        if i.get('lot') == LOT:
+            continue
+        try:
+            by_size[os.path.getsize(i.path)].append(i.path)
+        except OSError:
+            pass
+    deja = []
+    for it in list(lib.items(f'lot:{LOT}')):
+        src = it.path.decode('utf-8', 'replace')
+        dest = dest_of.get(src, src)
+        if os.path.isdir(os.path.dirname(dest)):
+            deja.append((it, src, os.path.relpath(os.path.dirname(dest), lib_cfg['dir'])))
+            continue
+        for other in by_size.get(os.path.getsize(src), []):
+            if filecmp.cmp(src, other, shallow=False):
+                deja.append((it, src, os.path.relpath(os.path.dirname(other.decode('utf-8', 'replace')), lib_cfg['dir'])))
+                break
+    for a, c in sorted(Counter(d for _, _, d in deja).items()):
+        say(f'  déjà présent, non ajouté : {a}  ({c} piste{"s" if c > 1 else ""})')
+    for it, src, _ in deja:
+        dest_of.pop(src, None)
+        it.remove(delete=False, with_album=True)
+        if not args.simulation:
+            dst = os.path.join(cand, DEJA, os.path.relpath(src, cand))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(src, dst)
+
+    albums = Counter(os.path.relpath(os.path.dirname(d), lib_cfg['dir']) for d in dest_of.values())
     for a, c in sorted(albums.items()):
         say(f'  → {a}  ({c} piste{"s" if c > 1 else ""})')
     if args.simulation:
         shutil.rmtree(tmp, ignore_errors=True)
-        return dict(pistes=n, albums=len(albums), illisibles=len(unreadable))
+        return dict(pistes=n - len(deja), albums=len(albums), illisibles=len(unreadable), deja=len(deja))
 
     before = {i.id: i.path for i in lib.items(f'lot:{LOT}')}
+    SPIN.set(f'{lib_cfg["nom"]} : déplacement des fichiers')
     beet(beetsdir, 'move', f'lot:{LOT}', capture=True)
     lib = Library(os.path.join(beetsdir, 'library.db'))
+    albums = Counter(os.path.relpath(os.path.dirname(i.path.decode('utf-8', 'replace')), lib_cfg['dir'])
+                     for i in lib.items(f'lot:{LOT}'))
     with open(f'{JOURNAL}/ranger_{LOT}_{key}.tsv', 'w', encoding='utf-8') as j:
         for it in lib.items(f'lot:{LOT}'):
             j.write(f"{before.get(it.id, b'').decode('utf-8', 'replace')}\t{it.path.decode('utf-8', 'replace')}\n")
@@ -515,6 +600,7 @@ def process(key, args):
             lib_inodes.add(os.stat(it.path).st_ino)
         except FileNotFoundError:
             pass
+    SPIN.set(f'{lib_cfg["nom"]} : fichiers illisibles')
     left = []
     for p in audio_files(cand):
         if not p.lower().endswith(LOW_EXT if key == 'low' else HI_EXT + ('.m4a',)):
@@ -532,12 +618,14 @@ def process(key, args):
         else:
             left.append(p)
     stats = covers(lib, cand, not args.sans_internet) if not args.sans_pochettes else Counter()
+    SPIN.set(f'{lib_cfg["nom"]} : nettoyage des dossiers vides')
     # nettoyage : dossiers devenus vides dans Candidats et dans la bibliothèque
     for top in (cand, lib_cfg['dir']):
         for folder, dirs, fs in os.walk(top, topdown=False):
             if folder not in (cand, lib_cfg['dir']) and not os.listdir(folder):
                 os.rmdir(folder)
-    return dict(pistes=n, albums=len(albums), illisibles=len(unreadable), restants=left, pochettes=stats)
+    return dict(pistes=n - len(deja), albums=len(albums), illisibles=len(unreadable), restants=left, pochettes=stats,
+                deja=len(deja))
 
 
 def main():
@@ -557,6 +645,7 @@ def main():
         LOGF = open(f'{JOURNAL}/ranger_{LOT}.log', 'w', encoding='utf-8')
     say(f'Rangement {LOT}' + (' — SIMULATION, rien ne sera déplacé' if args.simulation else ''))
     say('\n--- Aiguillage par format')
+    SPIN.set('Aiguillage par format')
     moved, ignored = route(args.simulation)
     say(f'  {moved} fichier(s) aiguillé(s)' + (' (en simulation, ils ne sont pas comptés ci-dessous)' if args.simulation and moved else ''))
     for p in ignored:
@@ -568,16 +657,24 @@ def main():
             for folder, dirs, fs in os.walk(cand, topdown=False):
                 if folder != cand and not os.listdir(folder):
                     os.rmdir(folder)
+            os.makedirs(cand, exist_ok=True)  # beets supprime les dossiers parents vidés par le déplacement
     if not args.simulation and any(results.values()) and os.path.exists(ANNUAIRE):
         say('\n--- Mise à jour des annuaires')
         for k, lib in LIBS.items():
-            subprocess.run([sys.executable, ANNUAIRE, lib['dir'], lib['beetsdir'] + '/library.db', lib['nom']],
-                           env=dict(os.environ, PYTHONPATH='/usr/share/beets'))
+            SPIN.set(f'Annuaire {lib["nom"]}')
+            r = subprocess.run([sys.executable, ANNUAIRE, lib['dir'], lib['beetsdir'] + '/library.db', lib['nom']],
+                               env=dict(os.environ, PYTHONPATH='/usr/share/beets'), text=True,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            for l in r.stdout.splitlines():
+                say('  ' + l)
+    SPIN.set('')
     say('\n=== Bilan')
     for k, r in results.items():
         if not r:
             say(f'  {LIBS[k]["nom"]} : rien à ranger'); continue
         line = f'  {LIBS[k]["nom"]} : {r["pistes"]} piste(s), {r["albums"]} album(s)'
+        if r.get('deja'):
+            line += f', {r["deja"]} déjà présente(s) non ajoutée(s)' + ('' if args.simulation else f' (mises de côté dans {CANDIDATS}/{DEJA}/)')
         if r.get('pochettes'):
             line += ', pochettes : ' + ', '.join(f'{v} {s}' for s, v in r['pochettes'].items())
         say(line)

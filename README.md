@@ -27,6 +27,10 @@ avec [beets](https://beets.io).
 ./list_songs --sans-internet  # pochettes sans recherche en ligne
 ./list_songs --sans-pochettes
 ./list_songs --empreintes      # calcule d'avance les empreintes de toute la bibliothèque (facultatif)
+./list_songs --verification   # recalcul complet des empreintes + vérification des bibliothèques
+./list_songs --verification --simulation  # idem, sans rien corriger
+./list_songs --retirer "Artistes/X/(2004) Album"            # supprime proprement un album
+./list_songs --retirer "Artistes/X/(2004) Album/01 - Titre.flac"  # ou un morceau
 ```
 
 Variables d'environnement : `RANGER_ROOT` (dossier `musics/` contenant `Candidats` et les bibliothèques), `RANGER_HOME`.
@@ -37,5 +41,22 @@ Variables d'environnement : `RANGER_ROOT` (dossier `musics/` contenant `Candidat
 - Configurations beets : voir `exemples/` (Low-Res dans `~/.config/beets`, Hi-Res dans `~/.config/beets/hires`).
 - Annuaire : copier `annuaire/` dans `~/.config/beets/annuaire/`.
 - Discogs (facultatif) : jeton personnel dans `~/discog` (chmod 600) — **ne jamais le committer**.
+
+## Retirer un morceau ou un album
+
+`--retirer CHEMIN…` supprime proprement : fichiers (et pochette / fichiers annexes si l'album n'a plus de
+musique), entrées de la base beets et du cache d'empreintes, dossiers devenus vides, puis régénère l'annuaire.
+Le chemin peut être relatif à la bibliothèque (`Artistes/…`), à `musics/` (`Musiques Hi-Res/Artistes/…`) ou absolu ;
+s'il existe dans les deux bibliothèques, le script demande de préciser. Liste et confirmation avant suppression
+(`--oui` pour ne pas demander, `--simulation` pour seulement voir). Refuse les chemins trop larges
+(`Artistes` entier, racine d'une bibliothèque). La base est sauvegardée avant.
+
+## Vérification complète
+
+`--verification` relit tous les fichiers (sans se fier au cache) et contrôle les deux bibliothèques :
+entrées de la base dont le fichier a disparu (retirées de la base, après sauvegarde), fichiers audio
+absents de la base, fichiers identiques présents plusieurs fois (même sous un autre nom), albums sans
+pochette, restes d'un rangement interrompu, entrées périmées du cache. Aucun fichier de musique n'est
+supprimé ni déplacé. Rapport : `~/.config/beets/journal/verification_<date>.tsv`.
 
 Un journal est écrit dans `~/.config/beets/journal/ranger_<date>.log` et la base beets est sauvegardée avant chaque rangement.

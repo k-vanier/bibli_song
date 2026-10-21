@@ -1,4 +1,4 @@
-directory: /srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/Musiques Low-Res
+directory: /srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics/Musiques Low-Res
 library: ~/.config/beets/library.db
 
 plugins: inline

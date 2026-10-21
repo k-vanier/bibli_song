@@ -1,4 +1,4 @@
-directory: /srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/Musiques Hi-Res
+directory: /srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics/Musiques Hi-Res
 library: ~/.config/beets/hires/library.db
 
 plugins: inline

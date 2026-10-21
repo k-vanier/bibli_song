@@ -1,8 +1,8 @@
 #!/usr/bin/python3
-"""Range la musique déposée dans les dossiers « Candidats » des bibliothèques.
+"""Range la musique déposée dans musics/Candidats vers les bibliothèques Low-Res et Hi-Res.
 
-Pour chaque bibliothèque (Musiques Low-Res = MP3, Musiques Hi-Res = sans perte) :
-  1. aiguille les fichiers vers la bonne bibliothèque selon leur format ;
+  1. aiguille les fichiers vers la bonne bibliothèque selon leur format
+     (MP3 → Musiques Low-Res, sans perte → Musiques Hi-Res) ;
   2. indexe les fichiers avec beets (lecture des tags, sans les modifier) ;
   3. complète artiste/album/année/disque d'après les dossiers si les tags manquent,
      harmonise avec les artistes et albums déjà présents ;
@@ -11,12 +11,14 @@ Pour chaque bibliothèque (Musiques Low-Res = MP3, Musiques Hi-Res = sans perte)
      Deezer, iTunes, Cover Art Archive, Discogs, sinon pochette générée) ;
   6. régénère Annuaire.html et Annuaire.csv.
 
-Les fichiers audio ne sont jamais modifiés ni écrasés (un doublon devient « .1 »).
-Les fichiers non audio (images, .cue, .nfo…) restent dans le dossier Candidats.
+Pas de doublons : une piste déjà présente (même fichier à destination, ou contenu identique
+ailleurs dans la bibliothèque) n'est pas ajoutée, elle est mise de côté dans
+Candidats/_déjà présents/. Jamais de « .1 » ; les fichiers audio ne sont ni modifiés ni écrasés.
+Les fichiers non audio (images, .cue, .nfo…) restent dans Candidats.
 
 Usage :
-  list_songs                  range tout ce qui est dans les dossiers Candidats
-  list_songs --simulation     montre ce qui serait fait, sans rien déplacer
+  list_songs                  range tout ce qui est dans Candidats
+  list_songs --simulation     montre ce qui serait fait, sans rien ranger
   list_songs --sans-internet  pas de recherche de pochette en ligne
 """
 import argparse, colorsys, datetime, fcntl, filecmp, hashlib, io, json, os, re, shutil, subprocess, sys
@@ -30,13 +32,17 @@ from mediafile import MediaFile  # noqa: E402
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 from unidecode import unidecode  # noqa: E402
 
-ROOT = os.environ.get('RANGER_ROOT', '/srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/')
+ROOT = os.environ.get('RANGER_ROOT', '/srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics/')
 HOME = os.environ.get('RANGER_HOME', os.path.expanduser('~'))
-LIBS = {
-    'low': dict(nom='Musiques Low-Res', dir=ROOT + 'Musiques Low-Res', beetsdir=HOME + '/.config/beets'),
-    'hi': dict(nom='Musiques Hi-Res', dir=ROOT + 'Musiques Hi-Res', beetsdir=HOME + '/.config/beets/hires'),
-}
 CANDIDATS = 'Candidats'
+CAND = os.path.join(ROOT, CANDIDATS)
+STAGE = os.path.join(CAND, '.en-cours')  # dossier de travail, un sous-dossier par bibliothèque
+LIBS = {
+    'low': dict(nom='Musiques Low-Res', dir=ROOT + 'Musiques Low-Res', beetsdir=HOME + '/.config/beets',
+                stage=os.path.join(STAGE, 'low')),
+    'hi': dict(nom='Musiques Hi-Res', dir=ROOT + 'Musiques Hi-Res', beetsdir=HOME + '/.config/beets/hires',
+               stage=os.path.join(STAGE, 'hi')),
+}
 JOURNAL = HOME + '/.config/beets/journal'
 ANNUAIRE = HOME + '/.config/beets/annuaire/annuaire.py'
 DISCOGS_TOKEN = HOME + '/discog'
@@ -137,37 +143,75 @@ def audio_files(top):
 
 # --------------------------------------------------------------------------- 1. aiguillage
 
-def route(simulation):
-    """Envoie chaque fichier audio dans le dossier Candidats de la bonne bibliothèque."""
-    moved, ignored, emptied = 0, [], set()
-    for key, lib in LIBS.items():
-        cand = os.path.join(lib['dir'], CANDIDATS)
-        for p in list(audio_files(cand)):
-            ext = os.path.splitext(p)[1].lower()
+def hidden(rel):
+    return any(seg.startswith(('_', '.')) for seg in rel.split(os.sep) if seg != '.')
+
+
+def route():
+    """Répartit le contenu de Candidats entre les dossiers de travail des deux bibliothèques, selon le format.
+    Un dossier qui n'a plus d'audio emmène ses pochettes et fichiers annexes avec la musique."""
+    moved, ignored = Counter(), []
+    targets = defaultdict(Counter)
+    for folder, dirs, files in os.walk(CAND, topdown=False):
+        rel = os.path.relpath(folder, CAND)
+        if hidden(rel):
+            continue
+        for f in sorted(files):
+            p = os.path.join(folder, f)
+            ext = os.path.splitext(f)[1].lower()
+            if ext not in AUDIO_EXT:
+                continue
             if ext in LOW_EXT:
                 target = 'low'
             elif ext in HI_EXT or (ext == '.m4a' and is_alac(p)):
                 target = 'hi'
             else:
                 ignored.append(p); continue
-            if target == key:
-                continue
-            rel = os.path.relpath(p, cand)
-            dest = os.path.join(LIBS[target]['dir'], CANDIDATS, rel)
-            say(f'  aiguillage → {LIBS[target]["nom"]} : {rel}')
-            if not simulation:
-                os.makedirs(os.path.dirname(dest), exist_ok=True)
-                if not os.path.exists(dest):
-                    shutil.move(p, dest)
-                emptied.add((os.path.dirname(p), os.path.dirname(dest)))
-            moved += 1
-    # un dossier qui n'a plus d'audio emmène ses pochettes et fichiers annexes avec la musique
-    for src, dst in emptied:
-        if os.path.isdir(src) and not any(f.lower().endswith(AUDIO_EXT) for f in os.listdir(src)):
-            for f in os.listdir(src):
-                if os.path.isfile(os.path.join(src, f)) and not os.path.exists(os.path.join(dst, f)):
-                    shutil.move(os.path.join(src, f), os.path.join(dst, f))
+            dst = os.path.join(LIBS[target]['stage'], rel, f)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(p, dst)
+            moved[target] += 1; targets[folder][target] += 1
+        for d in dirs:
+            targets[folder].update(targets.get(os.path.join(folder, d), Counter()))
+        if folder != CAND and targets[folder] and not any(f.lower().endswith(AUDIO_EXT) for f in os.listdir(folder)):
+            dst_dir = os.path.join(LIBS[targets[folder].most_common(1)[0][0]]['stage'], rel)
+            for f in os.listdir(folder):
+                p = os.path.join(folder, f)
+                if os.path.isfile(p) and not os.path.exists(os.path.join(dst_dir, f)):
+                    os.makedirs(dst_dir, exist_ok=True)
+                    shutil.move(p, os.path.join(dst_dir, f))
     return moved, ignored
+
+
+def restore_stage():
+    """Remet dans Candidats ce qui reste dans le dossier de travail (non audio, illisibles, simulation,
+    lancement interrompu). Renvoie les fichiers qui n'ont pas pu revenir (même nom déjà présent)."""
+    kept = []
+    for lib in LIBS.values():
+        st = lib['stage']
+        for folder, dirs, files in os.walk(st, topdown=False):
+            for f in files:
+                src = os.path.join(folder, f)
+                dst = os.path.join(CAND, os.path.relpath(src, st))
+                if os.path.exists(dst):
+                    kept.append(src); continue
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.move(src, dst)
+            if not os.listdir(folder):
+                os.rmdir(folder)
+    if os.path.isdir(STAGE) and not os.listdir(STAGE):
+        os.rmdir(STAGE)
+    return kept
+
+
+def set_aside(src, cand):
+    """Met de côté un fichier déjà présent dans la bibliothèque, sans le renommer."""
+    rel = os.path.relpath(src, cand)
+    dst = os.path.join(CAND, DEJA, rel)
+    if os.path.exists(dst):
+        dst = os.path.join(CAND, DEJA, LOT, rel)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.move(src, dst)
 
 
 # --------------------------------------------------------------------------- 3. métadonnées
@@ -500,10 +544,9 @@ def covers(lib, cand_dir, internet):
 
 def process(key, args):
     lib_cfg = LIBS[key]
-    cand = os.path.join(lib_cfg['dir'], CANDIDATS)
-    os.makedirs(cand, exist_ok=True)
+    cand = lib_cfg['stage']
     SPIN.set(f'{lib_cfg["nom"]} : recherche des fichiers dans {CANDIDATS}/')
-    tops = [os.path.join(cand, e) for e in sorted(os.listdir(cand)) if not e.startswith('_')]
+    tops = [os.path.join(cand, e) for e in sorted(os.listdir(cand)) if not e.startswith('_')] if os.path.isdir(cand) else []
     files = [p for p in audio_files(cand)
              if p.lower().endswith(LOW_EXT if key == 'low' else HI_EXT + ('.m4a',))]
     say(f'\n=== {lib_cfg["nom"]} : {len(files)} fichier(s) audio dans {CANDIDATS}/')
@@ -521,6 +564,11 @@ def process(key, args):
         beetsdir = tmp
     else:
         shutil.copy(os.path.join(beetsdir, 'library.db'), f'{JOURNAL}/{key}_library_avant_{LOT}.db')
+        # entrées laissées par un lancement interrompu (fichiers revenus depuis dans Candidats)
+        old = Library(os.path.join(beetsdir, 'library.db'))
+        for it in old.items():
+            if it.path.decode('utf-8', 'replace').startswith(STAGE + '/'):
+                it.remove(delete=False, with_album=True)
 
     SPIN.set(f'{lib_cfg["nom"]} : indexation de {len(files)} fichier(s) par beets')
     out = beet(beetsdir, 'import', '-q', '-A', '-C', '-W', '--set', f'lot={LOT}', *tops, capture=True)
@@ -532,17 +580,8 @@ def process(key, args):
         ext = os.path.splitext(it.path.decode('utf-8', 'replace'))[1].lower()
         if (key == 'low') != (ext in LOW_EXT):
             it.remove(delete=False, with_album=True)
-    SPIN.set(f'{lib_cfg["nom"]} : complétion des métadonnées')
-    n = fix_metadata(lib, cand)
-    say(f'  {n} piste(s) indexée(s), {len(unreadable)} illisible(s) par beets')
-
-    SPIN.set(f'{lib_cfg["nom"]} : calcul des nouveaux emplacements')
-    preview = beet(beetsdir, 'move', '-p', f'lot:{LOT}', capture=True)
-    lines = [re.sub(r'\x1b\[[0-9;]*m', '', l) for l in preview.splitlines()]
-    dest_of = {lines[i - 1].rstrip(): l.split(' -> ', 1)[1].strip()
-               for i, l in enumerate(lines) if l.startswith('  -> ') and i > 0}
-
-    # déjà dans la bibliothèque (dossier d'album existant ou fichier identique) : on n'ajoute rien
+    # déjà présent : contenu identique à un fichier de la bibliothèque, ou au même fichier déposé deux fois.
+    # Fait avant la complétion des métadonnées, pour que les copies écartées ne comptent pas comme des CD.
     SPIN.set(f'{lib_cfg["nom"]} : recherche des musiques déjà présentes')
     by_size = defaultdict(list)
     for i in lib.items():
@@ -552,33 +591,55 @@ def process(key, args):
             by_size[os.path.getsize(i.path)].append(i.path)
         except OSError:
             pass
-    deja = []
+    deja, batch_size = [], defaultdict(list)
+    for it in list(lib.items(f'lot:{LOT}')):
+        src = it.path.decode('utf-8', 'replace')
+        size = os.path.getsize(src)
+        other = next((o for o in by_size.get(size, []) if filecmp.cmp(src, o, shallow=False)), None)
+        if other:
+            deja.append((it, src, os.path.relpath(os.path.dirname(other.decode('utf-8', 'replace')), lib_cfg['dir'])))
+            continue
+        twin = next((o for o in batch_size[size] if filecmp.cmp(src, o, shallow=False)), None)
+        if twin:
+            deja.append((it, src, os.path.join(CANDIDATS, os.path.relpath(os.path.dirname(twin), cand))))
+            continue
+        batch_size[size].append(src)
+    for it, src, _ in deja:
+        it.remove(delete=False, with_album=True)
+
+    SPIN.set(f'{lib_cfg["nom"]} : complétion des métadonnées')
+    n = fix_metadata(lib, cand)
+    say(f'  {n + len(deja)} piste(s) indexée(s), {len(unreadable)} illisible(s) par beets')
+
+    SPIN.set(f'{lib_cfg["nom"]} : calcul des nouveaux emplacements')
+    preview = beet(beetsdir, 'move', '-p', f'lot:{LOT}', capture=True)
+    lines = [re.sub(r'\x1b\[[0-9;]*m', '', l) for l in preview.splitlines()]
+    dest_of = {lines[i - 1].rstrip(): l.split(' -> ', 1)[1].strip()
+               for i, l in enumerate(lines) if l.startswith('  -> ') and i > 0}
+
+    # même nom de fichier déjà à destination : on n'ajoute rien, jamais de .1 / .2
+    taken = set()
     for it in list(lib.items(f'lot:{LOT}')):
         src = it.path.decode('utf-8', 'replace')
         dest = dest_of.get(src, src)
-        if os.path.isdir(os.path.dirname(dest)):
+        if os.path.exists(dest) or dest in taken:
             deja.append((it, src, os.path.relpath(os.path.dirname(dest), lib_cfg['dir'])))
-            continue
-        for other in by_size.get(os.path.getsize(src), []):
-            if filecmp.cmp(src, other, shallow=False):
-                deja.append((it, src, os.path.relpath(os.path.dirname(other.decode('utf-8', 'replace')), lib_cfg['dir'])))
-                break
+            dest_of.pop(src, None)
+            it.remove(delete=False, with_album=True)
+        else:
+            taken.add(dest)
     for a, c in sorted(Counter(d for _, _, d in deja).items()):
         say(f'  déjà présent, non ajouté : {a}  ({c} piste{"s" if c > 1 else ""})')
-    for it, src, _ in deja:
-        dest_of.pop(src, None)
-        it.remove(delete=False, with_album=True)
-        if not args.simulation:
-            dst = os.path.join(cand, DEJA, os.path.relpath(src, cand))
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            shutil.move(src, dst)
+    if not args.simulation:
+        for _, src, _ in deja:
+            set_aside(src, cand)
 
     albums = Counter(os.path.relpath(os.path.dirname(d), lib_cfg['dir']) for d in dest_of.values())
     for a, c in sorted(albums.items()):
         say(f'  → {a}  ({c} piste{"s" if c > 1 else ""})')
     if args.simulation:
         shutil.rmtree(tmp, ignore_errors=True)
-        return dict(pistes=n - len(deja), albums=len(albums), illisibles=len(unreadable), deja=len(deja))
+        return dict(pistes=len(dest_of), albums=len(albums), illisibles=len(unreadable), deja=len(deja))
 
     before = {i.id: i.path for i in lib.items(f'lot:{LOT}')}
     SPIN.set(f'{lib_cfg["nom"]} : déplacement des fichiers')
@@ -608,30 +669,28 @@ def process(key, args):
         if os.stat(p).st_ino in lib_inodes:
             continue  # second nom d'un fichier déjà rangé (lien physique)
         dest_dir = by_od.get(os.path.relpath(os.path.dirname(p), cand))
-        if dest_dir:
-            stem, ext = os.path.splitext(os.path.basename(p))
-            dest = os.path.join(dest_dir, stem + ext); k = 1
-            while os.path.exists(dest):
-                dest = os.path.join(dest_dir, f'{stem}.{k}{ext}'); k += 1
+        dest = os.path.join(dest_dir, os.path.basename(p)) if dest_dir else None
+        if dest and os.path.exists(dest):
+            set_aside(p, cand); deja.append((None, p, os.path.relpath(dest_dir, lib_cfg['dir'])))
+        elif dest:
             shutil.move(p, dest)
             say(f'  illisible placé avec son album : {dest}')
         else:
-            left.append(p)
+            left.append(os.path.join(CAND, os.path.relpath(p, cand)))
     stats = covers(lib, cand, not args.sans_internet) if not args.sans_pochettes else Counter()
     SPIN.set(f'{lib_cfg["nom"]} : nettoyage des dossiers vides')
-    # nettoyage : dossiers devenus vides dans Candidats et dans la bibliothèque
-    for top in (cand, lib_cfg['dir']):
-        for folder, dirs, fs in os.walk(top, topdown=False):
-            if folder not in (cand, lib_cfg['dir']) and not os.listdir(folder):
-                os.rmdir(folder)
-    return dict(pistes=n - len(deja), albums=len(albums), illisibles=len(unreadable), restants=left, pochettes=stats,
+    # nettoyage : dossiers devenus vides dans la bibliothèque
+    for folder, dirs, fs in os.walk(lib_cfg['dir'], topdown=False):
+        if folder != lib_cfg['dir'] and not os.listdir(folder):
+            os.rmdir(folder)
+    return dict(pistes=sum(albums.values()), albums=len(albums), illisibles=len(unreadable), restants=left, pochettes=stats,
                 deja=len(deja))
 
 
 def main():
     global LOGF
-    ap = argparse.ArgumentParser(description='Range la musique déposée dans les dossiers Candidats.')
-    ap.add_argument('--simulation', action='store_true', help='montre ce qui serait fait, sans rien déplacer')
+    ap = argparse.ArgumentParser(description='Range la musique déposée dans musics/Candidats.')
+    ap.add_argument('--simulation', action='store_true', help='montre ce qui serait fait, sans rien ranger')
     ap.add_argument('--sans-internet', action='store_true', help='pas de recherche de pochette en ligne')
     ap.add_argument('--sans-pochettes', action='store_true', help='ne pose aucune pochette')
     args = ap.parse_args()
@@ -643,21 +702,25 @@ def main():
         sys.exit('Un rangement est déjà en cours.')
     if not args.simulation:
         LOGF = open(f'{JOURNAL}/ranger_{LOT}.log', 'w', encoding='utf-8')
-    say(f'Rangement {LOT}' + (' — SIMULATION, rien ne sera déplacé' if args.simulation else ''))
+    say(f'Rangement {LOT}' + (' — SIMULATION, rien ne sera rangé' if args.simulation else ''))
+    os.makedirs(CAND, exist_ok=True)
+    restore_stage()  # restes d'un lancement interrompu
     say('\n--- Aiguillage par format')
     SPIN.set('Aiguillage par format')
-    moved, ignored = route(args.simulation)
-    say(f'  {moved} fichier(s) aiguillé(s)' + (' (en simulation, ils ne sont pas comptés ci-dessous)' if args.simulation and moved else ''))
+    moved, ignored = route()
+    say('  ' + ', '.join(f'{moved[k]} fichier(s) → {LIBS[k]["nom"]}' for k in LIBS))
     for p in ignored:
-        say(f'  format non pris en charge, laissé en place : {p}')
-    results = {k: process(k, args) for k in LIBS}
-    if not args.simulation:
-        for lib in LIBS.values():
-            cand = os.path.join(lib['dir'], CANDIDATS)
-            for folder, dirs, fs in os.walk(cand, topdown=False):
-                if folder != cand and not os.listdir(folder):
-                    os.rmdir(folder)
-            os.makedirs(cand, exist_ok=True)  # beets supprime les dossiers parents vidés par le déplacement
+        say(f'  format non pris en charge, laissé en place : {os.path.relpath(p, CAND)}')
+    try:
+        results = {k: process(k, args) for k in LIBS}
+    finally:
+        SPIN.set(f'Retour des fichiers restants dans {CANDIDATS}/')
+        kept = restore_stage()
+        for folder, dirs, fs in os.walk(CAND, topdown=False):
+            if folder != CAND and not hidden(os.path.relpath(folder, CAND)) and not os.listdir(folder):
+                os.rmdir(folder)
+    for p in kept:
+        say(f'  resté dans le dossier de travail (même nom déjà dans {CANDIDATS}/) : {p}')
     if not args.simulation and any(results.values()) and os.path.exists(ANNUAIRE):
         say('\n--- Mise à jour des annuaires')
         for k, lib in LIBS.items():
@@ -679,7 +742,7 @@ def main():
             line += ', pochettes : ' + ', '.join(f'{v} {s}' for s, v in r['pochettes'].items())
         say(line)
         for p in r.get('restants', []):
-            say(f'    non rangé (illisible, sans album) : {p}')
+            say(f'    non rangé (illisible, sans album) : {os.path.relpath(p, CAND)}')
     if not args.simulation:
         say(f'\nJournal : {JOURNAL}/ranger_{LOT}.log')
 

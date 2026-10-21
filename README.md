@@ -10,7 +10,8 @@ Range automatiquement la musique déposée dans les dossiers `Candidats/` de deu
 3. Complétion des métadonnées manquantes d'après les noms de dossiers (artiste, album, année, CD),
    rattachement aux artistes/albums existants, nettoyage des noms (`[FLAC]`, `CD1`…).
 4. Rangement en `Artistes/<Artiste>/(<Année>) <Album>/NN - Titre` ou `Compilations/(<Année>) <Album>/`.
-   Rien n'est écrasé (les doublons deviennent `.1`).
+   Rien n'est écrasé : une musique déjà présente (dossier d'album existant ou fichier identique)
+   n'est pas ajoutée, elle est mise de côté dans `Candidats/_déjà présents/`.
 5. Pochette `folder.jpg` : intégrée → image déposée → Deezer → iTunes → Cover Art Archive → Discogs → générée.
 6. Régénération de `Annuaire.html` / `Annuaire.csv` dans chaque bibliothèque.
 

@@ -19,7 +19,7 @@ Usage :
   list_songs --simulation     montre ce qui serait fait, sans rien déplacer
   list_songs --sans-internet  pas de recherche de pochette en ligne
 """
-import argparse, colorsys, datetime, fcntl, hashlib, io, json, os, re, shutil, subprocess, sys
+import argparse, colorsys, datetime, fcntl, filecmp, hashlib, io, json, os, re, shutil, subprocess, sys
 import tempfile, textwrap, threading, time, urllib.parse, urllib.request
 from collections import Counter, defaultdict
 
@@ -46,6 +46,7 @@ OTHER_LOSSY = ('.wma', '.ogg', '.opus', '.aac', '.mpc')
 AUDIO_EXT = LOW_EXT + HI_EXT + OTHER_LOSSY + ('.m4a',)
 UA = 'list_songs/1.0 (bibliotheque musicale personnelle)'
 MINW = 500
+DEJA = '_déjà présents'
 
 LOT = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
 LOGF = None
@@ -537,13 +538,47 @@ def process(key, args):
 
     SPIN.set(f'{lib_cfg["nom"]} : calcul des nouveaux emplacements')
     preview = beet(beetsdir, 'move', '-p', f'lot:{LOT}', capture=True)
-    dests = [l.split(' -> ', 1)[1].strip() for l in preview.splitlines() if l.startswith('  -> ')]
-    albums = Counter(os.path.relpath(os.path.dirname(d), lib_cfg['dir']) for d in dests)
+    lines = [re.sub(r'\x1b\[[0-9;]*m', '', l) for l in preview.splitlines()]
+    dest_of = {lines[i - 1].rstrip(): l.split(' -> ', 1)[1].strip()
+               for i, l in enumerate(lines) if l.startswith('  -> ') and i > 0}
+
+    # déjà dans la bibliothèque (dossier d'album existant ou fichier identique) : on n'ajoute rien
+    SPIN.set(f'{lib_cfg["nom"]} : recherche des musiques déjà présentes')
+    by_size = defaultdict(list)
+    for i in lib.items():
+        if i.get('lot') == LOT:
+            continue
+        try:
+            by_size[os.path.getsize(i.path)].append(i.path)
+        except OSError:
+            pass
+    deja = []
+    for it in list(lib.items(f'lot:{LOT}')):
+        src = it.path.decode('utf-8', 'replace')
+        dest = dest_of.get(src, src)
+        if os.path.isdir(os.path.dirname(dest)):
+            deja.append((it, src, os.path.relpath(os.path.dirname(dest), lib_cfg['dir'])))
+            continue
+        for other in by_size.get(os.path.getsize(src), []):
+            if filecmp.cmp(src, other, shallow=False):
+                deja.append((it, src, os.path.relpath(os.path.dirname(other.decode('utf-8', 'replace')), lib_cfg['dir'])))
+                break
+    for a, c in sorted(Counter(d for _, _, d in deja).items()):
+        say(f'  déjà présent, non ajouté : {a}  ({c} piste{"s" if c > 1 else ""})')
+    for it, src, _ in deja:
+        dest_of.pop(src, None)
+        it.remove(delete=False, with_album=True)
+        if not args.simulation:
+            dst = os.path.join(cand, DEJA, os.path.relpath(src, cand))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(src, dst)
+
+    albums = Counter(os.path.relpath(os.path.dirname(d), lib_cfg['dir']) for d in dest_of.values())
     for a, c in sorted(albums.items()):
         say(f'  → {a}  ({c} piste{"s" if c > 1 else ""})')
     if args.simulation:
         shutil.rmtree(tmp, ignore_errors=True)
-        return dict(pistes=n, albums=len(albums), illisibles=len(unreadable))
+        return dict(pistes=n - len(deja), albums=len(albums), illisibles=len(unreadable), deja=len(deja))
 
     before = {i.id: i.path for i in lib.items(f'lot:{LOT}')}
     SPIN.set(f'{lib_cfg["nom"]} : déplacement des fichiers')
@@ -589,7 +624,8 @@ def process(key, args):
         for folder, dirs, fs in os.walk(top, topdown=False):
             if folder not in (cand, lib_cfg['dir']) and not os.listdir(folder):
                 os.rmdir(folder)
-    return dict(pistes=n, albums=len(albums), illisibles=len(unreadable), restants=left, pochettes=stats)
+    return dict(pistes=n - len(deja), albums=len(albums), illisibles=len(unreadable), restants=left, pochettes=stats,
+                deja=len(deja))
 
 
 def main():
@@ -637,6 +673,8 @@ def main():
         if not r:
             say(f'  {LIBS[k]["nom"]} : rien à ranger'); continue
         line = f'  {LIBS[k]["nom"]} : {r["pistes"]} piste(s), {r["albums"]} album(s)'
+        if r.get('deja'):
+            line += f', {r["deja"]} déjà présente(s) non ajoutée(s)' + ('' if args.simulation else f' (mises de côté dans {CANDIDATS}/{DEJA}/)')
         if r.get('pochettes'):
             line += ', pochettes : ' + ', '.join(f'{v} {s}' for s, v in r['pochettes'].items())
         say(line)

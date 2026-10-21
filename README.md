@@ -1,62 +1,65 @@
 # list_songs
 
-Range automatiquement la musique déposée dans `musics/Candidats/` vers deux bibliothèques
-(`musics/Musiques Low-Res` pour le MP3, `musics/Musiques Hi-Res` pour FLAC/WAV/DSD/AIFF/WavPack/APE/ALAC),
-avec [beets](https://beets.io).
+Automatically files the music dropped into `musics/Candidats/` into two libraries
+(`musics/Musiques Low-Res` for MP3, `musics/Musiques Hi-Res` for FLAC/WAV/DSD/AIFF/WavPack/APE/ALAC),
+using [beets](https://beets.io).
 
-## Ce que fait le script
+## What the script does
 
-1. Aiguillage des fichiers vers la bonne bibliothèque selon leur format.
-2. Import beets **sans modifier les tags** (`-A -C -W`).
-3. Complétion des métadonnées manquantes d'après les noms de dossiers (artiste, album, année, CD),
-   rattachement aux artistes/albums existants, nettoyage des noms (`[FLAC]`, `CD1`…).
-4. Rangement en `Artistes/<Artiste>/(<Année>) <Album>/NN - Titre` ou `Compilations/(<Année>) <Album>/`.
-   Pas de doublons ni de `.1` : une piste dont le fichier existe déjà à destination, ou identique
-   (contenu) à un fichier de la bibliothèque ou à un autre fichier déposé, n'est pas ajoutée ; elle est
-   mise de côté dans `Candidats/_déjà présents/`. Une piste manquante d'un album existant est ajoutée.
-   La comparaison se fait par empreinte BLAKE2, uniquement entre fichiers de même taille ; les empreintes
-   de la bibliothèque sont gardées en cache dans `~/.config/beets/empreintes.db`.
-5. Pochette `folder.jpg` : intégrée → image déposée → Deezer → iTunes → Cover Art Archive → Discogs → générée.
-6. Régénération de `Annuaire.html` / `Annuaire.csv` dans chaque bibliothèque.
+1. Routes files to the right library based on their format.
+2. Imports them with beets **without modifying tags** (`-A -C -W`).
+3. Fills in missing metadata from folder names (artist, album, year, disc),
+   matches existing artists/albums, cleans up names (`[FLAC]`, `CD1`…).
+4. Files tracks as `Artistes/<Artist>/(<Year>) <Album>/NN - Title` or `Compilations/(<Year>) <Album>/`.
+   No duplicates and no `.1` files: a track that is already present is not added. If its content is
+   identical to a file in the library (or to another dropped file), it is deleted from `Candidats/`;
+   if only the name matches (different content), it is set aside in `Candidats/_déjà présents/`.
+   A missing track of an existing album is added.
+   Comparison uses BLAKE2 hashes, only between files of the same size; the library hashes are cached
+   in `musics/empreintes.db` (the old cache `~/.config/beets/empreintes.db` is moved there automatically).
+5. `folder.jpg` cover: embedded → dropped image → Deezer → iTunes → Cover Art Archive → Discogs → generated.
+6. Regenerates `Annuaire.html` / `Annuaire.csv` in each library.
+7. Cleans up `Candidats/`: once an album is imported, its remaining files (images, `.cue`, `.nfo`…)
+   are deleted. Anything that could not be imported (unsupported format, unreadable file) stays in place.
 
-## Utilisation
+## Usage
 
 ```
-./list_songs --simulation     # aperçu, rien n'est déplacé
-./list_songs                  # rangement réel
-./list_songs --sans-internet  # pochettes sans recherche en ligne
-./list_songs --sans-pochettes
-./list_songs --empreintes      # calcule d'avance les empreintes de toute la bibliothèque (facultatif)
-./list_songs --verification   # recalcul complet des empreintes + vérification des bibliothèques
-./list_songs --verification --simulation  # idem, sans rien corriger
-./list_songs --retirer "Artistes/X/(2004) Album"            # supprime proprement un album
-./list_songs --retirer "Artistes/X/(2004) Album/01 - Titre.flac"  # ou un morceau
+./list_songs --simulation     # preview, nothing is moved
+./list_songs                  # actual filing
+./list_songs --sans-internet  # covers without online lookup
+./list_songs --sans-pochettes # no covers
+./list_songs --empreintes     # precompute hashes for the whole library (optional)
+./list_songs --verification   # full hash recomputation + library check
+./list_songs --verification --simulation  # same, without fixing anything
+./list_songs --retirer "Artistes/X/(2004) Album"                  # cleanly remove an album
+./list_songs --retirer "Artistes/X/(2004) Album/01 - Titre.flac"  # or a track
 ```
 
-Variables d'environnement : `RANGER_ROOT` (dossier `musics/` contenant `Candidats` et les bibliothèques), `RANGER_HOME`.
+Environment variables: `RANGER_ROOT` (the `musics/` folder containing `Candidats` and the libraries), `RANGER_HOME`.
 
-## Prérequis
+## Requirements
 
-- Debian : `apt install beets python3-pil python3-mediafile python3-unidecode fonts-dejavu-core`
-- Configurations beets : voir `exemples/` (Low-Res dans `~/.config/beets`, Hi-Res dans `~/.config/beets/hires`).
-- Annuaire : copier `annuaire/` dans `~/.config/beets/annuaire/`.
-- Discogs (facultatif) : jeton personnel dans `~/discog` (chmod 600) — **ne jamais le committer**.
+- Debian: `apt install beets python3-pil python3-mediafile python3-unidecode fonts-dejavu-core`
+- beets configurations: see `exemples/` (Low-Res in `~/.config/beets`, Hi-Res in `~/.config/beets/hires`).
+- Directory pages: copy `annuaire/` to `~/.config/beets/annuaire/`.
+- Discogs (optional): personal token in `~/discog` (chmod 600) — **never commit it**.
 
-## Retirer un morceau ou un album
+## Removing a track or an album
 
-`--retirer CHEMIN…` supprime proprement : fichiers (et pochette / fichiers annexes si l'album n'a plus de
-musique), entrées de la base beets et du cache d'empreintes, dossiers devenus vides, puis régénère l'annuaire.
-Le chemin peut être relatif à la bibliothèque (`Artistes/…`), à `musics/` (`Musiques Hi-Res/Artistes/…`) ou absolu ;
-s'il existe dans les deux bibliothèques, le script demande de préciser. Liste et confirmation avant suppression
-(`--oui` pour ne pas demander, `--simulation` pour seulement voir). Refuse les chemins trop larges
-(`Artistes` entier, racine d'une bibliothèque). La base est sauvegardée avant.
+`--retirer PATH…` removes cleanly: files (plus the cover / extra files if the album has no music left),
+beets database entries and hash cache entries, folders left empty, then regenerates the directory pages.
+The path can be relative to the library (`Artistes/…`), to `musics/` (`Musiques Hi-Res/Artistes/…`) or absolute;
+if it exists in both libraries, the script asks you to be more specific. Lists and asks for confirmation
+before deleting (`--oui` to skip the prompt, `--simulation` to only preview). Refuses paths that are too broad
+(the whole `Artistes` folder, a library root). The database is backed up first.
 
-## Vérification complète
+## Full check
 
-`--verification` relit tous les fichiers (sans se fier au cache) et contrôle les deux bibliothèques :
-entrées de la base dont le fichier a disparu (retirées de la base, après sauvegarde), fichiers audio
-absents de la base, fichiers identiques présents plusieurs fois (même sous un autre nom), albums sans
-pochette, restes d'un rangement interrompu, entrées périmées du cache. Aucun fichier de musique n'est
-supprimé ni déplacé. Rapport : `~/.config/beets/journal/verification_<date>.tsv`.
+`--verification` rereads every file (without trusting the cache) and checks both libraries:
+database entries whose file has disappeared (removed from the database, after a backup), audio files
+missing from the database, identical files present several times (even under another name), albums without
+a cover, leftovers from an interrupted run, stale cache entries. No music file is deleted or moved.
+Report: `~/.config/beets/journal/verification_<date>.tsv`.
 
-Un journal est écrit dans `~/.config/beets/journal/ranger_<date>.log` et la base beets est sauvegardée avant chaque rangement.
+A log is written to `~/.config/beets/journal/ranger_<date>.log` and the beets database is backed up before each run.

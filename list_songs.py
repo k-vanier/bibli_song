@@ -11,10 +11,12 @@
      Deezer, iTunes, Cover Art Archive, Discogs, sinon pochette générée) ;
   6. régénère Annuaire.html et Annuaire.csv.
 
-Pas de doublons : une piste déjà présente (même fichier à destination, ou contenu identique
-ailleurs dans la bibliothèque) n'est pas ajoutée, elle est mise de côté dans
-Candidats/_déjà présents/. Jamais de « .1 » ; les fichiers audio ne sont ni modifiés ni écrasés.
-Les fichiers non audio (images, .cue, .nfo…) restent dans Candidats.
+Pas de doublons : une piste déjà présente n'est pas ajoutée. Si son contenu est identique à un fichier
+de la bibliothèque, elle est supprimée de Candidats ; sinon (même nom à destination, contenu différent),
+elle est mise de côté dans Candidats/_déjà présents/. Jamais de « .1 » ; les fichiers de la bibliothèque
+ne sont ni modifiés ni écrasés.
+Une fois un album importé, ses fichiers restants dans Candidats (images, .cue, .nfo…) sont supprimés.
+Ce qui n'a pas pu être importé (format non pris en charge, illisible) reste dans Candidats.
 
 Usage :
   list_songs                  range tout ce qui est dans Candidats
@@ -44,7 +46,8 @@ LIBS = {
                stage=os.path.join(STAGE, 'hi')),
 }
 JOURNAL = HOME + '/.config/beets/journal'
-EMPREINTES = HOME + '/.config/beets/empreintes.db'
+EMPREINTES = ROOT + 'empreintes.db'  # cache des empreintes, rangé avec la musique
+EMPREINTES_ANCIEN = HOME + '/.config/beets/empreintes.db'
 ANNUAIRE = HOME + '/.config/beets/annuaire/annuaire.py'
 DISCOGS_TOKEN = HOME + '/discog'
 LOW_EXT = ('.mp3',)
@@ -265,6 +268,34 @@ def restore_stage():
     if os.path.isdir(STAGE) and not os.listdir(STAGE):
         os.rmdir(STAGE)
     return kept
+
+
+def discard(src, cand, other):
+    """Piste déjà présente : supprimée si son contenu est identique à « other » (fichier déjà rangé),
+    sinon mise de côté. Renvoie True si elle a été supprimée."""
+    try:
+        if other and os.path.isfile(other) and os.path.getsize(src) == os.path.getsize(other) \
+                and EMP.get(src, store=False) == EMP.get(other):
+            os.remove(src)
+            return True
+    except OSError:
+        pass
+    set_aside(src, cand)
+    return False
+
+
+def purge_imported(cand):
+    """Supprime les fichiers restants (images, .cue, .nfo…) des dossiers dont toute la musique a été importée.
+    Un dossier qui contient encore de l'audio (non importé) est laissé tel quel, avec ses fichiers annexes."""
+    n = 0
+    for folder, dirs, files in os.walk(cand, topdown=False):
+        if folder == cand or any(f.lower().endswith(AUDIO_EXT) for _, _, fs in os.walk(folder) for f in fs):
+            continue
+        for f in files:
+            os.remove(os.path.join(folder, f)); n += 1
+        if not os.listdir(folder):
+            os.rmdir(folder)
+    return n
 
 
 def set_aside(src, cand):
@@ -674,15 +705,16 @@ def process(key, args):
             h = new_hash[src] = EMP.get(src, store=False)
             other = next((o for o in by_size.get(size, []) if EMP.get(o) == h), None)
             if other:
-                deja.append((it, src, os.path.relpath(os.path.dirname(other.decode('utf-8', 'replace')), lib_cfg['dir'])))
+                other = other.decode('utf-8', 'replace')
+                deja.append((it, src, os.path.relpath(os.path.dirname(other), lib_cfg['dir']), other))
                 continue
             twin = next((o for o in batch_size[size] if EMP.get(o, store=False) == h), None)
             if twin:
-                deja.append((it, src, os.path.join(CANDIDATS, os.path.relpath(os.path.dirname(twin), cand))))
+                deja.append((it, src, os.path.join(CANDIDATS, os.path.relpath(os.path.dirname(twin), cand)), twin))
                 continue
         batch_size[size].append(src)
     EMP.commit()
-    for it, src, _ in deja:
+    for it, src, *_ in deja:
         it.remove(delete=False, with_album=True); ids.discard(it.id)
 
     SPIN.set(f'{lib_cfg["nom"]} : complétion des métadonnées')
@@ -701,16 +733,20 @@ def process(key, args):
         src = it.path.decode('utf-8', 'replace')
         dest = dest_of.get(src, src)
         if os.path.exists(dest) or dest in taken:
-            deja.append((it, src, os.path.relpath(os.path.dirname(dest), lib_cfg['dir'])))
+            deja.append((it, src, os.path.relpath(os.path.dirname(dest), lib_cfg['dir']), dest if os.path.exists(dest) else None))
             dest_of.pop(src, None)
             it.remove(delete=False, with_album=True); ids.discard(it.id)
         else:
             taken.add(dest)
-    for a, c in sorted(Counter(d for _, _, d in deja).items()):
+    for a, c in sorted(Counter(d for _, _, d, _ in deja).items()):
         say(f'  déjà présent, non ajouté : {a}  ({c} piste{"s" if c > 1 else ""})')
+    # les copies d'un fichier du même lot ne sont traitées qu'après le déplacement de l'original
+    twins = [d for d in deja if d[3] and d[3].startswith(cand + '/')]
+    deja_lib = [d for d in deja if d not in twins]
+    supprimes = 0
     if not args.simulation:
-        for _, src, _ in deja:
-            set_aside(src, cand)
+        for _, src, _, other in deja_lib:
+            supprimes += discard(src, cand, other)
 
     albums = Counter(os.path.relpath(os.path.dirname(d), lib_cfg['dir']) for d in dest_of.values())
     for a, c in sorted(albums.items()):
@@ -726,13 +762,17 @@ def process(key, args):
     moved_items = lot(lib, ids)
     albums = Counter(os.path.relpath(os.path.dirname(i.path.decode('utf-8', 'replace')), lib_cfg['dir'])
                      for i in moved_items)
+    new_path = {}
     with open(f'{JOURNAL}/ranger_{LOT}_{key}.tsv', 'w', encoding='utf-8') as j:
         for it in moved_items:
             old_p, new_p = before.get(it.id, b'').decode('utf-8', 'replace'), it.path.decode('utf-8', 'replace')
             j.write(f"{old_p}\t{new_p}\n")
+            new_path[old_p] = new_p
             if old_p in new_hash and os.path.exists(new_p):
                 EMP.record(new_p, new_hash[old_p])  # empreinte déjà calculée : on la garde pour la suite
     EMP.commit()
+    for _, src, _, twin in twins:
+        supprimes += discard(src, cand, new_path.get(twin))
 
     # fichiers illisibles : placés à côté de leurs pistes sœurs
     by_od = {}
@@ -754,20 +794,22 @@ def process(key, args):
         dest_dir = by_od.get(os.path.relpath(os.path.dirname(p), cand))
         dest = os.path.join(dest_dir, os.path.basename(p)) if dest_dir else None
         if dest and os.path.exists(dest):
-            set_aside(p, cand); deja.append((None, p, os.path.relpath(dest_dir, lib_cfg['dir'])))
+            supprimes += discard(p, cand, dest); deja.append((None, p, os.path.relpath(dest_dir, lib_cfg['dir']), dest))
         elif dest:
             shutil.move(p, dest)
             say(f'  illisible placé avec son album : {dest}')
         else:
             left.append(os.path.join(CAND, os.path.relpath(p, cand)))
     stats = covers(lib, ids, cand, not args.sans_internet) if not args.sans_pochettes else Counter()
+    SPIN.set(f'{lib_cfg["nom"]} : suppression des fichiers importés dans {CANDIDATS}/')
+    annexes = purge_imported(cand)  # après les pochettes, qui peuvent venir des images déposées
     SPIN.set(f'{lib_cfg["nom"]} : nettoyage des dossiers vides')
     # nettoyage : dossiers devenus vides dans la bibliothèque
     for folder, dirs, fs in os.walk(lib_cfg['dir'], topdown=False):
         if folder != lib_cfg['dir'] and not os.listdir(folder):
             os.rmdir(folder)
     return dict(pistes=sum(albums.values()), albums=len(albums), illisibles=len(unreadable), restants=left, pochettes=stats,
-                deja=len(deja))
+                deja=len(deja), supprimes=supprimes, annexes=annexes)
 
 
 def build_hashes(force=False, extra=()):
@@ -998,6 +1040,8 @@ def main():
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         sys.exit('Un rangement est déjà en cours.')
+    if not os.path.exists(EMPREINTES) and os.path.exists(EMPREINTES_ANCIEN):
+        shutil.move(EMPREINTES_ANCIEN, EMPREINTES)  # ancien emplacement du cache
     EMP = Empreintes(EMPREINTES)
     if args.empreintes:
         build_hashes()
@@ -1040,7 +1084,13 @@ def main():
             say(f'  {LIBS[k]["nom"]} : rien à ranger'); continue
         line = f'  {LIBS[k]["nom"]} : {r["pistes"]} piste(s), {r["albums"]} album(s)'
         if r.get('deja'):
-            line += f', {r["deja"]} déjà présente(s) non ajoutée(s)' + ('' if args.simulation else f' (mises de côté dans {CANDIDATS}/{DEJA}/)')
+            line += f', {r["deja"]} déjà présente(s) non ajoutée(s)'
+            if not args.simulation:
+                aside = r['deja'] - r['supprimes']
+                line += f' ({r["supprimes"]} identique(s) supprimée(s) de {CANDIDATS}/' + \
+                        (f', {aside} mise(s) de côté dans {CANDIDATS}/{DEJA}/' if aside else '') + ')'
+        if r.get('annexes'):
+            line += f', {r["annexes"]} fichier(s) annexe(s) supprimé(s) de {CANDIDATS}/'
         if r.get('pochettes'):
             line += ', pochettes : ' + ', '.join(f'{v} {s}' for s, v in r['pochettes'].items())
         say(line)

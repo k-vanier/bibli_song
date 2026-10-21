@@ -27,6 +27,8 @@ avec [beets](https://beets.io).
 ./list_songs --sans-internet  # pochettes sans recherche en ligne
 ./list_songs --sans-pochettes
 ./list_songs --empreintes      # calcule d'avance les empreintes de toute la bibliothèque (facultatif)
+./list_songs --verification   # recalcul complet des empreintes + vérification des bibliothèques
+./list_songs --verification --simulation  # idem, sans rien corriger
 ```
 
 Variables d'environnement : `RANGER_ROOT` (dossier `musics/` contenant `Candidats` et les bibliothèques), `RANGER_HOME`.
@@ -37,5 +39,13 @@ Variables d'environnement : `RANGER_ROOT` (dossier `musics/` contenant `Candidat
 - Configurations beets : voir `exemples/` (Low-Res dans `~/.config/beets`, Hi-Res dans `~/.config/beets/hires`).
 - Annuaire : copier `annuaire/` dans `~/.config/beets/annuaire/`.
 - Discogs (facultatif) : jeton personnel dans `~/discog` (chmod 600) — **ne jamais le committer**.
+
+## Vérification complète
+
+`--verification` relit tous les fichiers (sans se fier au cache) et contrôle les deux bibliothèques :
+entrées de la base dont le fichier a disparu (retirées de la base, après sauvegarde), fichiers audio
+absents de la base, fichiers identiques présents plusieurs fois (même sous un autre nom), albums sans
+pochette, restes d'un rangement interrompu, entrées périmées du cache. Aucun fichier de musique n'est
+supprimé ni déplacé. Rapport : `~/.config/beets/journal/verification_<date>.tsv`.
 
 Un journal est écrit dans `~/.config/beets/journal/ranger_<date>.log` et la base beets est sauvegardée avant chaque rangement.

@@ -179,13 +179,13 @@ class Empreintes:
                 h.update(chunk)
         return h.hexdigest()
 
-    def get(self, p, store=True):
+    def get(self, p, store=True, force=False):
         p = p if isinstance(p, bytes) else os.fsencode(p)
-        if p in self.memo:
+        if p in self.memo and not force:
             return self.memo[p]
         st = os.stat(p)
         row = self.con.execute('select size, mtime, hash from f where path = ?', (p,)).fetchone()
-        if row and row[0] == st.st_size and row[1] == st.st_mtime_ns:
+        if row and row[0] == st.st_size and row[1] == st.st_mtime_ns and not force:
             h = row[2]
         else:
             h = self.compute(p)
@@ -770,26 +770,105 @@ def process(key, args):
                 deja=len(deja))
 
 
-def build_hashes():
+def build_hashes(force=False, extra=()):
+    """Empreinte de chaque fichier des bibliothèques (et des fichiers de « extra »).
+    force=True : tout est relu, sans se fier au cache. Renvoie {chemin: empreinte}."""
     paths = [p for lib in LIBS.values() for _, p in lib_paths(lib['beetsdir'] + '/library.db')]
-    t0, done = time.time(), 0
-    for k, p in enumerate(paths, 1):
-        if k % 50 == 0 or k == len(paths):
-            rest = (time.time() - t0) / max(done, 1) * (len(paths) - k) if done else 0
-            SPIN.set(f'Empreintes {k}/{len(paths)}' + (f', reste ~{int(rest) // 60} min' if done else ''))
+    paths += [os.fsencode(p) for p in extra]
+    todo, sizes = [], {}
+    for p in paths:
         try:
-            row = EMP.con.execute('select size, mtime from f where path = ?', (p,)).fetchone()
             st = os.stat(p)
-            if not (row and row[0] == st.st_size and row[1] == st.st_mtime_ns):
-                EMP.get(p); done += 1
         except OSError:
-            pass
-        if k % 200 == 0:
+            continue
+        sizes[p] = st.st_size
+        row = None if force else EMP.con.execute('select size, mtime from f where path = ?', (p,)).fetchone()
+        if not (row and row[0] == st.st_size and row[1] == st.st_mtime_ns):
+            todo.append(p)
+    total = sum(sizes[p] for p in todo) or 1
+    t0, read = time.time(), 0
+    for k, p in enumerate(todo, 1):
+        el = time.time() - t0
+        rest = el / read * (total - read) if read else 0
+        SPIN.set(f'Empreintes {k}/{len(todo)} ({read / 1e9:.0f}/{total / 1e9:.0f} Go)'
+                 + (f', reste ~{int(rest) // 3600} h {int(rest) % 3600 // 60:02d}' if read else ''))
+        try:
+            EMP.get(p, force=True)
+        except OSError:
+            continue
+        read += sizes[p]
+        if k % 100 == 0:
             EMP.commit()
     EMP.commit()
     SPIN.set('')
-    n = EMP.con.execute('select count(*) from f').fetchone()[0]
-    say(f'{done} empreinte(s) calculée(s), {n} au total dans {EMPREINTES}')
+    say(f'  {len(todo)} empreinte(s) calculée(s) ({read / 1e9:.1f} Go lus), {len(sizes)} fichier(s) au total')
+    return {p: EMP.get(p) for p in sizes}
+
+
+def verification(simulation):
+    """Recalcule toutes les empreintes et contrôle les deux bibliothèques. Ne touche à aucun fichier de musique :
+    seules les entrées de la base dont le fichier a disparu et les entrées périmées du cache sont retirées."""
+    report = f'{JOURNAL}/verification_{LOT}.tsv'
+    out, all_untracked = [], []
+    say('\n--- Base beets et disque')
+    for key, lib in LIBS.items():
+        db = lib['beetsdir'] + '/library.db'
+        SPIN.set(f'{lib["nom"]} : comparaison de la base et du disque')
+        known = lib_paths(db)
+        missing = [(i, p) for i, p in known if not os.path.exists(p)]
+        in_db = {p for _, p in known}
+        untracked, nocover = [], []
+        for folder, dirs, files in os.walk(lib['dir']):
+            if folder == lib['dir']:
+                dirs[:] = [d for d in dirs if d in ('Artistes', 'Compilations', 'À trier')]
+            audio = [f for f in files if f.lower().endswith(AUDIO_EXT)]
+            for f in audio:
+                if os.fsencode(os.path.join(folder, f)) not in in_db:
+                    untracked.append(os.path.join(folder, f))
+            if audio and 'folder.jpg' not in files:
+                nocover.append(folder)
+        if missing and not simulation:
+            shutil.copy(db, f'{JOURNAL}/{key}_library_avant_verification_{LOT}.db')
+            blib = Library(db)
+            for i, _ in missing:
+                it = blib.get_item(i)
+                if it:
+                    it.remove(delete=False, with_album=True)
+        out += [('fichier disparu (retiré de la base)' if not simulation else 'fichier disparu', lib['nom'],
+                 p.decode('utf-8', 'replace')) for _, p in missing]
+        all_untracked += untracked
+        out += [('absent de la base', lib['nom'], p) for p in untracked]
+        out += [('album sans pochette', lib['nom'], f) for f in nocover]
+        say(f'  {lib["nom"]} : {len(known)} piste(s) en base, {len(missing)} fichier(s) disparu(s)'
+            + ('' if simulation or not missing else ' (retirés de la base)')
+            + f', {len(untracked)} fichier(s) audio absent(s) de la base, {len(nocover)} album(s) sans pochette')
+
+    say('\n--- Empreintes (calcul complet, sans le cache)')
+    hashes = build_hashes(force=True, extra=all_untracked)
+    groups = defaultdict(list)
+    for p, h in hashes.items():
+        groups[h].append(p)
+    dups = [sorted(g) for g in groups.values() if len(g) > 1]
+    for g in sorted(dups):
+        for p in g:
+            out.append(('fichier identique', f'groupe {dups.index(g) + 1}', p.decode('utf-8', 'replace')))
+    say(f'  {len(dups)} groupe(s) de fichiers identiques ({sum(len(g) - 1 for g in dups)} copie(s) en trop)')
+    stale = [p for (p,) in EMP.con.execute('select path from f') if bytes(p) not in hashes]
+    if stale and not simulation:
+        EMP.con.executemany('delete from f where path = ?', [(p,) for p in stale])
+        EMP.commit()
+    say(f'  cache : {len(stale)} entrée(s) périmée(s)' + ('' if simulation or not stale else ' retirée(s)'))
+
+    if os.path.isdir(STAGE):
+        n = sum(len(fs) for _, _, fs in os.walk(STAGE))
+        out.append(('reste d\'un rangement interrompu', CANDIDATS, STAGE))
+        say(f'\n  {n} fichier(s) dans {STAGE} : reste d\'un rangement interrompu, ils reviendront dans {CANDIDATS} au prochain lancement')
+
+    with open(report, 'w', encoding='utf-8') as fh:
+        fh.write('problème\tbibliothèque\tchemin\n')
+        for row in out:
+            fh.write('\t'.join(row) + '\n')
+    say(f'\nRapport détaillé : {report}')
 
 
 def main():
@@ -800,6 +879,9 @@ def main():
     ap.add_argument('--sans-pochettes', action='store_true', help='ne pose aucune pochette')
     ap.add_argument('--empreintes', action='store_true',
                     help="calcule d'avance l'empreinte de chaque fichier des bibliothèques (long la première fois), puis s'arrête")
+    ap.add_argument('--verification', action='store_true',
+                    help='recalcule toutes les empreintes sans le cache et vérifie les bibliothèques (base, disque, '
+                         'doublons, pochettes), puis s\'arrête ; avec --simulation, ne corrige rien')
     args = ap.parse_args()
     os.makedirs(JOURNAL, exist_ok=True)
     lock = open(f'{JOURNAL}/.ranger.lock', 'w')
@@ -810,6 +892,11 @@ def main():
     EMP = Empreintes(EMPREINTES)
     if args.empreintes:
         build_hashes()
+        return
+    if args.verification:
+        LOGF = open(f'{JOURNAL}/verification_{LOT}.log', 'w', encoding='utf-8')
+        say(f'Vérification complète {LOT}' + (' — SIMULATION, rien ne sera corrigé' if args.simulation else ''))
+        verification(args.simulation)
         return
     if not args.simulation:
         LOGF = open(f'{JOURNAL}/ranger_{LOT}.log', 'w', encoding='utf-8')

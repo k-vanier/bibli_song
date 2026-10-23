@@ -129,10 +129,11 @@ const DLT = f => LOCAL ? `Clic droit → « Enregistrer le lien sous… » pour 
 const MOIS = new Intl.DateTimeFormat('fr-FR', {month: 'long', year: 'numeric'});
 const JOUR = new Intl.DateTimeFormat('fr-FR', {day: '2-digit', month: '2-digit', year: 'numeric'});
 const byDate = [...A].sort((x, y) => y.ad - x.ad || x.i - y.i);
+A.forEach(a => { a.F = [...new Set(a.tr.map(t => t.q.split(' ')[0].replace(/^WAVE$/, 'WAV')).filter(Boolean))].sort().join('/'); });
 A.forEach(a => { const d = new Date(a.ad * 1000); a.M = MOIS.format(d).replace(/^./, c => c.toUpperCase()); a.Y = String(d.getFullYear()); });
 let sec = '', lib = '', q = '', order = '';
 function card(a) {
-  const img = `<div class="cw">${a.c ? `<img class="cover" loading="lazy" src="${url(a.p)}/folder.jpg" alt="">` : `<div class="cover"></div>`}<span class="badge${hi(a.b) ? ' hi' : ''}">${esc(short(a.b))}</span></div>`;
+  const img = `<div class="cw">${a.c ? `<img class="cover" loading="lazy" src="${url(a.p)}/folder.jpg" alt="">` : `<div class="cover"></div>`}<span class="badge${hi(a.b) ? ' hi' : ''}">${esc([short(a.b), a.F].filter(Boolean).join(' · '))}</span></div>`;
   const sub = order ? [a.s === 'C' ? 'Compilation' : a.ar, a.y] : a.s === 'C' ? [a.y, `${a.tr.length} pistes`] : [a.ar, a.y];
   return `<div class="card" tabindex="0" data-i="${a.i}">${img}<div class="meta"><div class="al">${esc(a.al)}</div><div class="sub">${esc(sub.filter(Boolean).join(' · '))}</div></div></div>`;
 }

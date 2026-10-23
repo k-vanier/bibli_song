@@ -9,7 +9,7 @@
   4. range en Artistes/<Artiste>/(Année) Album/ ou Compilations/(Année) Album/ ;
   5. pose un folder.jpg par album (jaquette déjà présente dans le dossier de l'album ou
      le dossier déposé, pochette intégrée, Deezer, iTunes, Cover Art Archive, Discogs, sinon pochette générée) ;
-  6. régénère Annuaire.html et Annuaire.csv.
+  6. régénère l'annuaire commun musics/Annuaire.html et Annuaire.csv.
 
 Pas de doublons : une piste déjà présente n'est pas ajoutée. Si son contenu est identique à un fichier
 de la bibliothèque, elle est supprimée de Candidats ; sinon (même nom à destination, contenu différent),
@@ -915,17 +915,17 @@ def build_hashes(force=False, extra=()):
 
 
 def regen_annuaires(keys):
-    if not os.path.exists(ANNUAIRE):
+    """Un seul annuaire (musics/Annuaire.html et .csv) pour toutes les bibliothèques, régénéré dès que l'une change."""
+    if not os.path.exists(ANNUAIRE) or not keys:
         return
-    say('\n--- Mise à jour des annuaires')
-    for k in keys:
-        lib = LIBS[k]
-        SPIN.set(f'Annuaire {lib["nom"]}')
-        r = subprocess.run([sys.executable, ANNUAIRE, lib['dir'], lib['beetsdir'] + '/library.db', lib['nom']],
-                           env=dict(os.environ, PYTHONPATH='/usr/share/beets'), text=True,
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        for l in r.stdout.splitlines():
-            say('  ' + l)
+    say('\n--- Mise à jour de l\'annuaire')
+    SPIN.set('Annuaire')
+    r = subprocess.run([sys.executable, ANNUAIRE, ROOT] + [f'{os.path.relpath(lib["dir"], ROOT)}:{lib["beetsdir"]}/library.db'
+                                                           for lib in LIBS.values()],
+                       env=dict(os.environ, PYTHONPATH='/usr/share/beets'), text=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for l in r.stdout.splitlines():
+        say('  ' + l)
     SPIN.set('')
 
 

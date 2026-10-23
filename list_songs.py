@@ -342,8 +342,10 @@ def from_path(origdir):
     """Déduit (artiste, album, année, disque, compilation) du chemin dans Candidats."""
     segs = [s for s in origdir.split('/') if s and s != '.']
     disc = 0
-    if len(segs) > 1 and DISCSEG.match(segs[-1]):
-        disc = int(DISCSEG.match(segs[-1]).group(1)); segs = segs[:-1]
+    # les références d'édition ([US, Label – CD5 2 95644]) ne sont pas un numéro de disque
+    dm = DISCSEG.match(re.sub(r'[\[\({][^\]\)}]*(?:,|–|\d{4,})[^\]\)}]*[\]\)}]', '', segs[-1])) if segs else None
+    if len(segs) > 1 and dm:
+        disc = int(dm.group(1)); segs = segs[:-1]
     if not segs:
         return '', 'Titres divers', 0, disc, False
     yr = 0

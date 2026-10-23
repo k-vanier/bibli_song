@@ -22,7 +22,12 @@ using [beets](https://beets.io).
    → Discogs → generated. A present image named `cover`, `front`, `folder`, `jaquette`… wins over the embedded
    cover; an image with another name is used only if there is no embedded cover; `back`, `cd`, `booklet`… are ignored.
 6. Regenerates a single directory page for both libraries: `musics/Annuaire.html` / `musics/Annuaire.csv`
-   (filter by library, download button next to each track).
+   (filter by library, sort A–Z or by date added, download button next to each track).
+   Date added: from beets, except for tracks of the initial import of a library (all on the same day), where the
+   file date on disk is used; an album takes the date of its most recent track.
+   Opened from the network share, the page also has foobar2000 buttons (play a track, play or add an album).
+   Once per Windows PC, double-click `musics\foobar\Installer le lien foobar.cmd` (no admin rights;
+   `Retirer le lien foobar.cmd` removes it). Downloading from the share: right-click ⬇ → "Save link as…".
    Subfolders: any depth is accepted (`Artist - Discography/Singles/Artist - 1996 - Title/`…).
    Subfolders without music (`Covers/`, `Scans/`…) follow their album, so their images are used as covers
    and then cleaned up. Several dropped folders of the same album with the same titles are editions, not CDs:

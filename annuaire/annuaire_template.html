@@ -53,6 +53,14 @@ td.n{color:var(--muted);width:3.5em;font-variant-numeric:tabular-nums}
 td.d{color:var(--muted);text-align:right;width:4em;font-variant-numeric:tabular-nums}
 td.q{color:var(--muted);font-size:12px;white-space:nowrap;text-align:right}
 .ta{color:var(--muted);font-size:12px}
+.cw{position:relative}
+.badge{position:absolute;top:8px;left:8px;background:rgba(0,0,0,.62);color:#fff;font-size:11px;font-weight:600;padding:2px 7px;border-radius:6px;letter-spacing:.02em}
+.badge.hi{background:var(--accent)}
+td.dl{width:2.6em;padding:4px 8px 4px 0;text-align:right}
+.dlb{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:8px;color:var(--accent);background:var(--accent-soft);text-decoration:none}
+.dlb:hover{background:var(--accent);color:var(--panel)}
+.dlb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.dlb svg{width:16px;height:16px}
 .empty{color:var(--muted);padding:40px 0;text-align:center}
 @media (max-width:520px){.grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}.dh img{width:96px;height:96px}td.q{display:none}}
 </style>
@@ -68,6 +76,7 @@ td.q{color:var(--muted);font-size:12px;white-space:nowrap;text-align:right}
       <button data-s="A" aria-pressed="false">Artistes</button>
       <button data-s="C" aria-pressed="false">Compilations</button>
     </div>
+    <div class="seg" role="group" aria-label="Bibliothèque" id="libs"></div>
   </div>
   <nav class="az" id="az"></nav>
 </header>
@@ -85,20 +94,24 @@ const fold = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const url = p => p.split('/').map(encodeURIComponent).join('/');
 const dur = d => d ? `${Math.floor(d/60)}:${String(d%60).padStart(2,'0')}` : '';
 const letter = a => { const c = fold(a.ar).replace(/^the /,'')[0] || '#'; return /[a-z]/.test(c) ? c.toUpperCase() : '#'; };
+const short = b => b.replace(/^Musiques\s+/, '');
+const hi = b => /hi/i.test(b);
+const DL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>';
 A.forEach((a, i) => { a.i = i; a.k = fold([a.ar, a.al, a.y, ...a.tr.map(t => t.t + ' ' + t.a)].join(' ')); a.L = a.s === 'C' ? 'Compilations' : letter(a); });
 document.getElementById('t').textContent = S.title;
 document.title = S.title + ' — Annuaire';
 document.getElementById('st').textContent =
-  `${S.artists} artistes · ${S.compils} compilations · ${S.albums} albums · ${S.tracks.toLocaleString('fr-FR')} pistes · ${S.hours.toLocaleString('fr-FR')} h d'écoute · mis à jour le ${S.date}`;
-let sec = '', q = '';
+  `${S.libs.map(short).join(' + ')} · ${S.artists} artistes · ${S.compils} compilations · ${S.albums} albums · ${S.tracks.toLocaleString('fr-FR')} pistes · ${S.hours.toLocaleString('fr-FR')} h d'écoute · mis à jour le ${S.date}`;
+document.getElementById('libs').innerHTML = ['', ...S.libs].map(b => `<button data-b="${esc(b)}" aria-pressed="${!b}">${b ? esc(short(b)) : 'Toutes'}</button>`).join('');
+let sec = '', lib = '', q = '';
 function card(a) {
-  const img = a.c ? `<img class="cover" loading="lazy" src="${url(a.p)}/folder.jpg" alt="">` : `<div class="cover"></div>`;
+  const img = `<div class="cw">${a.c ? `<img class="cover" loading="lazy" src="${url(a.p)}/folder.jpg" alt="">` : `<div class="cover"></div>`}<span class="badge${hi(a.b) ? ' hi' : ''}">${esc(short(a.b))}</span></div>`;
   const sub = a.s === 'C' ? [a.y, `${a.tr.length} pistes`] : [a.ar, a.y];
   return `<div class="card" tabindex="0" data-i="${a.i}">${img}<div class="meta"><div class="al">${esc(a.al)}</div><div class="sub">${esc(sub.filter(Boolean).join(' · '))}</div></div></div>`;
 }
 function render() {
   const words = fold(q).split(/\s+/).filter(Boolean);
-  const res = A.filter(a => (!sec || a.s === sec) && words.every(w => a.k.includes(w)));
+  const res = A.filter(a => (!sec || a.s === sec) && (!lib || a.b === lib) && words.every(w => a.k.includes(w)));
   document.getElementById('count').textContent = `${res.length} album${res.length > 1 ? 's' : ''}`;
   const groups = new Map();
   for (const a of res) { const g = a.s === 'C' ? 'Compilations' : a.ar; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(a); }
@@ -113,10 +126,10 @@ function render() {
 }
 function openAlbum(i) {
   const a = A[i], dlg = document.getElementById('dlg');
-  const rows = a.tr.map(t => `<tr><td class="n">${esc(t.n)}</td><td>${esc(t.t)}${t.a && t.a !== a.ar ? `<div class="ta">${esc(t.a)}</div>` : ''}</td><td class="q">${esc(t.q)}</td><td class="d">${dur(t.d)}</td></tr>`).join('');
+  const rows = a.tr.map(t => `<tr><td class="n">${esc(t.n)}</td><td>${esc(t.t)}${t.a && t.a !== a.ar ? `<div class="ta">${esc(t.a)}</div>` : ''}</td><td class="q">${esc(t.q)}</td><td class="d">${dur(t.d)}</td><td class="dl"><a class="dlb" href="${url(a.p)}/${url(t.f)}" download="${esc(t.f)}" title="Télécharger ${esc(t.f)}" aria-label="Télécharger ${esc(t.t)}">${DL}</a></td></tr>`).join('');
   const total = a.tr.reduce((s, t) => s + t.d, 0);
   dlg.innerHTML = `<div class="dh">${a.c ? `<img src="${url(a.p)}/folder.jpg" alt="">` : '<img alt="">'}<div><h3>${esc(a.al)}</h3>
-    <div class="sub">${esc([a.ar, a.y, `${a.tr.length} pistes`, total ? Math.round(total / 60) + ' min' : ''].filter(Boolean).join(' · '))}</div>
+    <div class="sub">${esc([a.ar, a.y, short(a.b), `${a.tr.length} pistes`, total ? Math.round(total / 60) + ' min' : ''].filter(Boolean).join(' · '))}</div>
     <div class="path">${esc(a.p)}</div></div><button class="close" aria-label="Fermer">✕</button></div>
     <div class="tl"><table>${rows}</table></div>`;
   dlg.querySelector('.close').onclick = () => dlg.close();
@@ -126,8 +139,11 @@ document.getElementById('list').addEventListener('click', e => { const c = e.tar
 document.getElementById('list').addEventListener('keydown', e => { const c = e.target.closest('.card'); if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openAlbum(+c.dataset.i); } });
 document.getElementById('dlg').addEventListener('click', e => { if (e.target.id === 'dlg') e.target.close(); });
 let tm; document.getElementById('q').addEventListener('input', e => { clearTimeout(tm); tm = setTimeout(() => { q = e.target.value; render(); }, 150); });
-document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
-  sec = b.dataset.s; document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', x === b)); render();
+document.querySelectorAll('.seg button[data-s]').forEach(b => b.onclick = () => {
+  sec = b.dataset.s; document.querySelectorAll('.seg button[data-s]').forEach(x => x.setAttribute('aria-pressed', x === b)); render();
+});
+document.querySelectorAll('.seg button[data-b]').forEach(b => b.onclick = () => {
+  lib = b.dataset.b; document.querySelectorAll('.seg button[data-b]').forEach(x => x.setAttribute('aria-pressed', x === b)); render();
 });
 render();
 </script>

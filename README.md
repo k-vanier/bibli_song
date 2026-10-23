@@ -21,7 +21,8 @@ using [beets](https://beets.io).
    its parent or a `Scans`/`Artwork`/`Covers` subfolder) → embedded → Deezer → iTunes → Cover Art Archive
    → Discogs → generated. A present image named `cover`, `front`, `folder`, `jaquette`… wins over the embedded
    cover; an image with another name is used only if there is no embedded cover; `back`, `cd`, `booklet`… are ignored.
-6. Regenerates `Annuaire.html` / `Annuaire.csv` in each library.
+6. Regenerates a single directory page for both libraries: `musics/Annuaire.html` / `musics/Annuaire.csv`
+   (filter by library, download button next to each track).
    Subfolders: any depth is accepted (`Artist - Discography/Singles/Artist - 1996 - Title/`…).
    Subfolders without music (`Covers/`, `Scans/`…) follow their album, so their images are used as covers
    and then cleaned up. Several dropped folders of the same album with the same titles are editions, not CDs:

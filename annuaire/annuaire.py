@@ -106,6 +106,8 @@ for f in os.listdir(os.path.join(here, 'foobar')):
     src, dst = os.path.join(here, 'foobar', f), os.path.join(root, 'foobar', f)
     if not os.path.exists(dst) or not filecmp.cmp(src, dst, shallow=False):
         shutil.copy(src, dst)
+    if f.endswith('.cmd'):
+        os.chmod(dst, 0o755)  # sans droit d'exécution, Samba refuse de lancer le fichier depuis Windows
 
 tpl = open(os.path.join(here, 'annuaire_template.html'), encoding='utf-8').read()
 payload = json.dumps({'stats': stats, 'albums': data}, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')

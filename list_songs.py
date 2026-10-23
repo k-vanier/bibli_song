@@ -7,8 +7,8 @@
   3. complète artiste/album/année/disque d'après les dossiers si les tags manquent,
      harmonise avec les artistes et albums déjà présents ;
   4. range en Artistes/<Artiste>/(Année) Album/ ou Compilations/(Année) Album/ ;
-  5. pose un folder.jpg par album (pochette intégrée, image du dossier déposé,
-     Deezer, iTunes, Cover Art Archive, Discogs, sinon pochette générée) ;
+  5. pose un folder.jpg par album (jaquette déjà présente dans le dossier de l'album ou
+     le dossier déposé, pochette intégrée, Deezer, iTunes, Cover Art Archive, Discogs, sinon pochette générée) ;
   6. régénère Annuaire.html et Annuaire.csv.
 
 Pas de doublons : une piste déjà présente n'est pas ajoutée. Si son contenu est identique à un fichier
@@ -516,23 +516,45 @@ def cover_embedded(folder):
     return False
 
 
-def cover_local(folder, srcdirs):
-    prio, bad = ('folder', 'cover', 'front', 'albumart', 'pochette'), ('back', 'cd', 'disc', 'booklet', 'inlay', 'inside', 'tray', 'verso', 'dos', 'label')
-    cands = []
+IMG_EXT = ('.jpg', '.jpeg', '.png', '.webp')
+SCANS = ('scans', 'scan', 'artwork', 'artworks', 'covers', 'cover', 'pochette', 'pochettes', 'images')
+
+
+def local_images(folder, srcdirs):
+    """Images de jaquette déjà présentes : dans le dossier de l'album (bibliothèque), dans le dossier déposé,
+    son parent et leurs sous-dossiers de scans. Renvoie (score, taille, chemin) ;
+    score 2 = nom de face avant (folder, cover, front…), 1 = nom quelconque ; les dos, CD, livrets… sont écartés."""
+    prio, bad = ('folder', 'cover', 'front', 'albumart', 'pochette', 'jaquette', 'recto'), \
+        ('back', 'cd', 'disc', 'booklet', 'inlay', 'inside', 'tray', 'verso', 'dos', 'label', 'livret')
+    dirs = [folder]
     for d in srcdirs:
-        for dd in (d, os.path.dirname(d)):
-            if not os.path.isdir(dd):
-                continue
-            for f in os.listdir(dd):
-                fl = f.lower()
-                if fl.endswith(('.jpg', '.jpeg', '.png')):
-                    score = 2 if fl.startswith(prio) else (0 if any(x in fl for x in bad) else 1)
-                    if score:
-                        cands.append((score, os.path.getsize(os.path.join(dd, f)), os.path.join(dd, f)))
-    for _, _, p in sorted(cands, reverse=True):
-        with open(p, 'rb') as fh:
-            if save_cover(fh.read(), folder, 'image déposée'):
-                return True
+        dirs += [d, os.path.dirname(d)]
+    for d in list(dirs):
+        if os.path.isdir(d):
+            dirs += [os.path.join(d, s) for s in os.listdir(d) if s.lower() in SCANS]
+    cands, seen = [], set()
+    for dd in dirs:
+        if not os.path.isdir(dd) or os.path.realpath(dd) in seen:
+            continue
+        seen.add(os.path.realpath(dd))
+        for f in os.listdir(dd):
+            fl = f.lower()
+            p = os.path.join(dd, f)
+            if fl.endswith(IMG_EXT) and fl != 'folder.jpg' and os.path.isfile(p):
+                score = 2 if fl.startswith(prio) else (0 if any(x in fl for x in bad) else 1)
+                if score:
+                    cands.append((score, os.path.getsize(p), p))
+    return sorted(cands, reverse=True)
+
+
+def cover_local(folder, cands, source):
+    for _, _, p in cands:
+        try:
+            with open(p, 'rb') as fh:
+                if save_cover(fh.read(), folder, f'{source} : {os.path.basename(p)}'):
+                    return True
+        except OSError:
+            continue
     return False
 
 
@@ -633,10 +655,15 @@ def covers(lib, ids, cand_dir, internet):
         if os.path.exists(os.path.join(f, 'folder.jpg')) or not os.path.isdir(f):
             continue
         aa, al, yr = info[f]
-        if cover_embedded(f):
+        # une jaquette déjà présente (nommée cover, front…) passe avant la pochette intégrée,
+        # souvent plus petite ; une image au nom quelconque ne vient qu'après
+        imgs = local_images(f, srcs)
+        if cover_local(f, [c for c in imgs if c[0] == 2], 'image présente'):
+            stats['image présente'] += 1
+        elif cover_embedded(f):
             stats['intégrée'] += 1
-        elif cover_local(f, srcs):
-            stats['image déposée'] += 1
+        elif cover_local(f, [c for c in imgs if c[0] == 1], 'image présente'):
+            stats['image présente'] += 1
         elif internet and cover_online(f, aa, re.sub(r'\s*\((?:UK|US|édition \d+)\)', '', al), token):
             stats['internet'] += 1
         else:

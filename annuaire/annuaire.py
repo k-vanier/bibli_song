@@ -6,7 +6,7 @@ Usage : annuaire.py <dossier musics> <bibliothèque>:<base beets> [<bibliothèqu
 Les métadonnées viennent de beets ; un fichier audio absent de la base est
 listé d'après son nom. Les anciens annuaires par bibliothèque sont supprimés.
 """
-import csv, datetime, json, os, re, sys
+import csv, datetime, filecmp, json, os, re, shutil, sys
 from beets import config
 from beets.library import Library
 
@@ -94,7 +94,15 @@ with open(os.path.join(root, 'Annuaire.csv'), 'w', encoding='utf-8-sig', newline
             w.writerow([a['b'], 'Compilations' if a['s'] == 'C' else 'Artistes', a['ar'], a['y'], a['al'], t['n'], t['t'], t['a'],
                         f"{t['d'] // 60}:{t['d'] % 60:02d}" if t['d'] else '', t['q'], f"{a['p']}/{t['f']}"])
 
-tpl = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'annuaire_template.html'), encoding='utf-8').read()
+here = os.path.dirname(os.path.abspath(__file__))
+# installeur du lien foobar: (boutons ▶ de la page), à lancer une fois par PC Windows depuis le partage
+os.makedirs(os.path.join(root, 'foobar'), exist_ok=True)
+for f in os.listdir(os.path.join(here, 'foobar')):
+    src, dst = os.path.join(here, 'foobar', f), os.path.join(root, 'foobar', f)
+    if not os.path.exists(dst) or not filecmp.cmp(src, dst, shallow=False):
+        shutil.copy(src, dst)
+
+tpl = open(os.path.join(here, 'annuaire_template.html'), encoding='utf-8').read()
 payload = json.dumps({'stats': stats, 'albums': data}, ensure_ascii=False, separators=(',', ':')).replace('</', '<\\/')
 with open(os.path.join(root, 'Annuaire.html'), 'w', encoding='utf-8') as fh:
     fh.write(tpl.replace('__TITLE__', stats['title']).replace('__DATA__', payload))

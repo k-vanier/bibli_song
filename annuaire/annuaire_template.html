@@ -61,6 +61,7 @@ td.dl{width:2.6em;padding:4px 8px 4px 0;text-align:right}
 .dlb:hover{background:var(--accent);color:var(--panel)}
 .dlb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .dlb svg{width:16px;height:16px}
+.tip{color:var(--muted);font-size:12px;padding:8px 18px;border-bottom:1px solid var(--line);background:var(--chip)}
 .empty{color:var(--muted);padding:40px 0;text-align:center}
 @media (max-width:520px){.grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}.dh img{width:96px;height:96px}td.q{display:none}}
 </style>
@@ -103,6 +104,9 @@ document.title = S.title + ' — Annuaire';
 document.getElementById('st').textContent =
   `${S.libs.map(short).join(' + ')} · ${S.artists} artistes · ${S.compils} compilations · ${S.albums} albums · ${S.tracks.toLocaleString('fr-FR')} pistes · ${S.hours.toLocaleString('fr-FR')} h d'écoute · mis à jour le ${S.date}`;
 document.getElementById('libs').innerHTML = ['', ...S.libs].map(b => `<button data-b="${esc(b)}" aria-pressed="${!b}">${b ? esc(short(b)) : 'Toutes'}</button>`).join('');
+// ouverte depuis le partage réseau : le navigateur ignore « download » et lit le morceau
+const LOCAL = location.protocol === 'file:';
+const DLT = f => LOCAL ? `Clic droit → « Enregistrer le lien sous… » pour télécharger ${f}` : `Télécharger ${f}`;
 let sec = '', lib = '', q = '';
 function card(a) {
   const img = `<div class="cw">${a.c ? `<img class="cover" loading="lazy" src="${url(a.p)}/folder.jpg" alt="">` : `<div class="cover"></div>`}<span class="badge${hi(a.b) ? ' hi' : ''}">${esc(short(a.b))}</span></div>`;
@@ -126,11 +130,12 @@ function render() {
 }
 function openAlbum(i) {
   const a = A[i], dlg = document.getElementById('dlg');
-  const rows = a.tr.map(t => `<tr><td class="n">${esc(t.n)}</td><td>${esc(t.t)}${t.a && t.a !== a.ar ? `<div class="ta">${esc(t.a)}</div>` : ''}</td><td class="q">${esc(t.q)}</td><td class="d">${dur(t.d)}</td><td class="dl"><a class="dlb" href="${url(a.p)}/${url(t.f)}" download="${esc(t.f)}" title="Télécharger ${esc(t.f)}" aria-label="Télécharger ${esc(t.t)}">${DL}</a></td></tr>`).join('');
+  const rows = a.tr.map(t => `<tr><td class="n">${esc(t.n)}</td><td>${esc(t.t)}${t.a && t.a !== a.ar ? `<div class="ta">${esc(t.a)}</div>` : ''}</td><td class="q">${esc(t.q)}</td><td class="d">${dur(t.d)}</td><td class="dl"><a class="dlb" href="${url(a.p)}/${url(t.f)}" download="${esc(t.f)}" title="${esc(DLT(t.f))}" aria-label="Télécharger ${esc(t.t)}">${DL}</a></td></tr>`).join('');
   const total = a.tr.reduce((s, t) => s + t.d, 0);
   dlg.innerHTML = `<div class="dh">${a.c ? `<img src="${url(a.p)}/folder.jpg" alt="">` : '<img alt="">'}<div><h3>${esc(a.al)}</h3>
     <div class="sub">${esc([a.ar, a.y, short(a.b), `${a.tr.length} pistes`, total ? Math.round(total / 60) + ' min' : ''].filter(Boolean).join(' · '))}</div>
     <div class="path">${esc(a.p)}</div></div><button class="close" aria-label="Fermer">✕</button></div>
+    ${LOCAL ? '<div class="tip">Pour télécharger un morceau : clic droit sur ⬇ puis « Enregistrer le lien sous… ».</div>' : ''}
     <div class="tl"><table>${rows}</table></div>`;
   dlg.querySelector('.close').onclick = () => dlg.close();
   dlg.showModal();

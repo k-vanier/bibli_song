@@ -31,6 +31,9 @@ albums = []
 for name, dbp in libs:
     base = os.path.join(root, name)
     meta = {it.path.decode('utf-8', 'replace'): it for it in Library(os.path.expanduser(dbp)).items()}
+    # date d'ajout : celle de beets, sauf pour l'import initial de la bibliothèque (tout le même jour),
+    # où la date du fichier sur le disque dit mieux quand le morceau est arrivé dans la collection
+    first = min((it.added for it in meta.values() if it.added), default=0) + 86400
     for old in ('Annuaire.html', 'Annuaire.csv'):  # ancien annuaire propre à la bibliothèque
         if os.path.exists(os.path.join(base, old)):
             os.remove(os.path.join(base, old))
@@ -50,11 +53,12 @@ for name, dbp in libs:
             artist, al = 'Compilations', parts[-1]
         m = re.match(r'^\((\d{4})\) (.*)$', al)
         year, title = (m.group(1), m.group(2)) if m else ('', al)
-        tracks = []
+        tracks, added = [], 0
         for f in audio:
             p = os.path.join(folder, f)
             it = meta.get(p)
             stem, ext = os.path.splitext(f)
+            added = max(added, it.added if it and it.added and it.added > first else os.stat(p).st_mtime)
             tracks.append({
                 'n': f'{it.disc}-{it.track:02d}' if it and it.disctotal and it.disctotal > 1 and it.track
                      else (f'{it.track:02d}' if it and it.track else ''),
@@ -68,6 +72,7 @@ for name, dbp in libs:
             's': 'C' if section == 'Compilations' else 'A',
             'b': name, 'ar': artist, 'al': title, 'y': year, 'p': os.path.join(name, rel),
             'c': os.path.exists(os.path.join(folder, 'folder.jpg')),
+            'ad': int(added),
             'tr': tracks,
         })
 

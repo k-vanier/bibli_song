@@ -9,7 +9,7 @@ if (-not (Test-Path -LiteralPath $fb)) { $fb = Join-Path ${env:ProgramFiles(x86)
 if (-not (Test-Path -LiteralPath $fb)) { Note "foobar2000.exe introuvable"; exit 1 }
 if ($Url -notmatch '^foobar:(play|add)\?(.+)$') { Note "lien refuse (format)"; exit 1 }
 $mode = $Matches[1]
-$path = [uri]::UnescapeDataString($Matches[2]).TrimEnd('/')
+$path = [uri]::UnescapeDataString($Matches[2]).TrimEnd('/') -replace '^\\{3,}', '\\'  # \\\serveur -> \\serveur
 Note "chemin : $path"
 if (-not (Test-Path -LiteralPath $path)) { Note "chemin inaccessible"; exit 1 }
 $item = Get-Item -LiteralPath $path

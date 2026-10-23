@@ -17,8 +17,15 @@ using [beets](https://beets.io).
    A missing track of an existing album is added.
    Comparison uses BLAKE2 hashes, only between files of the same size; the library hashes are cached
    in `musics/empreintes.db` (the old cache `~/.config/beets/empreintes.db` is moved there automatically).
-5. `folder.jpg` cover: embedded → dropped image → Deezer → iTunes → Cover Art Archive → Discogs → generated.
+5. `folder.jpg` cover: image already present (in the album folder of the library, the dropped folder,
+   its parent or a `Scans`/`Artwork`/`Covers` subfolder) → embedded → Deezer → iTunes → Cover Art Archive
+   → Discogs → generated. A present image named `cover`, `front`, `folder`, `jaquette`… wins over the embedded
+   cover; an image with another name is used only if there is no embedded cover; `back`, `cd`, `booklet`… are ignored.
 6. Regenerates `Annuaire.html` / `Annuaire.csv` in each library.
+   Subfolders: any depth is accepted (`Artist - Discography/Singles/Artist - 1996 - Title/`…).
+   Subfolders without music (`Covers/`, `Scans/`…) follow their album, so their images are used as covers
+   and then cleaned up. Several dropped folders of the same album with the same titles are editions, not CDs:
+   they are filed separately, as `Album (EU)` / `Album (US)` (or `Album (édition 2)`).
 7. Cleans up `Candidats/`: once an album is imported, its remaining files (images, `.cue`, `.nfo`…)
    are deleted. Anything that could not be imported (unsupported format, unreadable file) stays in place.
 

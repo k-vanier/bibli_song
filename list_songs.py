@@ -7,8 +7,8 @@
   3. complète artiste/album/année/disque d'après les dossiers si les tags manquent,
      harmonise avec les artistes et albums déjà présents ;
   4. range en Artistes/<Artiste>/(Année) Album/ ou Compilations/(Année) Album/ ;
-  5. pose un folder.jpg par album (pochette intégrée, image du dossier déposé,
-     Deezer, iTunes, Cover Art Archive, Discogs, sinon pochette générée) ;
+  5. pose un folder.jpg par album (jaquette déjà présente dans le dossier de l'album ou
+     le dossier déposé, pochette intégrée, Deezer, iTunes, Cover Art Archive, Discogs, sinon pochette générée) ;
   6. régénère Annuaire.html et Annuaire.csv.
 
 Pas de doublons : une piste déjà présente n'est pas ajoutée. Si son contenu est identique à un fichier
@@ -243,10 +243,21 @@ def route():
             dst_dir = os.path.join(LIBS[targets[folder].most_common(1)[0][0]]['stage'], rel)
             for f in os.listdir(folder):
                 p = os.path.join(folder, f)
-                if os.path.isfile(p) and not os.path.exists(os.path.join(dst_dir, f)):
-                    os.makedirs(dst_dir, exist_ok=True)
-                    shutil.move(p, os.path.join(dst_dir, f))
+                if os.path.isfile(p):
+                    move_new(p, os.path.join(dst_dir, f))
+                elif os.path.isdir(p) and not targets.get(p) and not f.startswith(('_', '.')) and next(audio_files(p), None) is None:
+                    # sous-dossier sans musique (Covers, Scans…) : il suit l'album
+                    for sub, _, fs in os.walk(p):
+                        for ff in fs:
+                            move_new(os.path.join(sub, ff), os.path.join(dst_dir, f, os.path.relpath(sub, p), ff))
     return moved, ignored
+
+
+def move_new(src, dst):
+    """Déplace src vers dst, sauf si dst existe déjà (src reste alors en place)."""
+    if not os.path.exists(dst):
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(src, dst)
 
 
 def restore_stage():
@@ -315,10 +326,12 @@ DISCSEG = re.compile(r'^(?:.*[\[\(_ -])?(?:cd|disc|disk|disque)[\s_-]*(\d+)\b[^/
 DISCALB = re.compile(r'^(.*?)[\s,_-]*[\[\(]?\b(?:cd|disc|disk)\s*(\d+)\b[^\]\)]*[\]\)]?\s*$', re.I)
 FEAT = re.compile(r'\s+(?:feat\.?|ft\.?|featuring|avec)\s+.*$', re.I)
 VA = re.compile(r'^(various( artists)?|va|v\.a\.|artistes divers|multi[- ]interpr[eè]tes|compilation)$', re.I)
+PAYS = r'EU|UE|US|USA|UK|GER|DE|FR|JP|JPN|CAN|CA|AUS|NL|IT|ES|BR|KR|RU|SWE|INT'
+EDITION = re.compile(rf'[\[\(,]\s*({PAYS})\s*[,\]\)]')
 
 
 def clean_dirname(s):
-    s = re.sub(r'\[[^\]]*\]', '', s)
+    s = re.sub(r'\[[^\]]*\]|\{[^}]*\}', '', s)
     s = re.sub(r'\((?:[^)]*(?:\bcd\b|flac|mp3|kbps|bit|khz|web|vinyl|vinyle|limited|edition|remaster|\d{3,})[^)]*)\)', '', s, flags=re.I)
     s = re.sub(r'^\s*(?:19|20)\d\d\s*[\.\-_]?\s*-?\s*', '', s)
     s = re.sub(r'[-_ ]+(?:FLAC|MP3|WEB|320|16BIT|24BIT)\b.*$', '', s, flags=re.I)
@@ -346,11 +359,35 @@ def from_path(origdir):
     else:
         artist, album = segs[0], segs[-1]
         artist = re.split(r'\s+-\s+(?:discograph|discografia|integrale|intégrale)', artist, flags=re.I)[0]
+    a2, sep, rest = album.partition(' - ')
+    if sep and len(segs) > 1 and same(clean_dirname(a2), clean_dirname(artist)):
+        album = rest  # « Artiste - 2001 - Album » rangé dans le dossier de l'artiste
     album = clean_dirname(album) or clean_dirname(segs[-1]) or 'Titres divers'
     artist = clean_dirname(artist)
     if comp or VA.match(artist or ''):
         return 'Various Artists', album, yr, disc, True
     return artist, album, yr, disc, False
+
+
+def editions(its, ods):
+    """Plusieurs dossiers déposés pour un même album : s'ils reprennent les mêmes titres, ce sont des éditions
+    (EU, US…) et non des CD d'un coffret. Renvoie {dossier: suffixe d'album}, vide si ce ne sont pas des éditions."""
+    titles = {o: {norm(i.title) for i in its if i['origdir'] == o and i.title} for o in ods}
+    shared = any(len(titles[a] & titles[b]) > 0.5 * min(len(titles[a]), len(titles[b]))
+                 for k, a in enumerate(ods) for b in ods[k + 1:] if titles[a] and titles[b])
+    if not shared:
+        return {}
+    # les CD d'une même édition (Album (EU)/CD1, CD2) restent ensemble
+    base = {o: os.path.dirname(o) if DISCSEG.match(os.path.basename(o)) else o for o in ods}
+    groups = sorted(set(base.values()))
+    if len(groups) < 2:
+        return {}
+    pays = {g: (EDITION.search(os.path.basename(g)) or [None, None])[1] for g in groups}
+    if all(pays.values()) and len(set(pays.values())) == len(groups):
+        lab = {g: f' ({pays[g].upper()})' for g in groups}
+    else:
+        lab = {g: '' if k == 0 else f' (édition {k + 1})' for k, g in enumerate(groups)}
+    return {o: lab[base[o]] for o in ods}
 
 
 def lot(lib, ids):
@@ -435,12 +472,13 @@ def fix_metadata(lib, db, ids, cand_dir):
         names = Counter(i.album for i in its)
         name = max(names, key=lambda x: (x != x.lower(), x != x.upper(), names[x]))
         ods = sorted({i['origdir'] for i in its})
-        if len(ods) > 1 and len({os.path.dirname(o) for o in ods}) == 1 and len({i.disc for i in its}) < len(ods):
+        eds = editions(its, ods) if len(ods) > 1 else {}
+        if not eds and len(ods) > 1 and len({os.path.dirname(o) for o in ods}) == 1 and len({i.disc for i in its}) < len(ods):
             for i in its:
                 i.disc = ods.index(i['origdir']) + 1
         dt = max([i.disc or 1 for i in its])
         for i in its:
-            i.year, i.album = yr, name
+            i.year, i.album = yr, name + eds.get(i['origdir'], '')
             if dt > 1:
                 i.disctotal = dt
             i.store()
@@ -516,23 +554,45 @@ def cover_embedded(folder):
     return False
 
 
-def cover_local(folder, srcdirs):
-    prio, bad = ('folder', 'cover', 'front', 'albumart', 'pochette'), ('back', 'cd', 'disc', 'booklet', 'inlay', 'inside', 'tray', 'verso', 'dos', 'label')
-    cands = []
+IMG_EXT = ('.jpg', '.jpeg', '.png', '.webp')
+SCANS = ('scans', 'scan', 'artwork', 'artworks', 'covers', 'cover', 'pochette', 'pochettes', 'images')
+
+
+def local_images(folder, srcdirs):
+    """Images de jaquette déjà présentes : dans le dossier de l'album (bibliothèque), dans le dossier déposé,
+    son parent et leurs sous-dossiers de scans. Renvoie (score, taille, chemin) ;
+    score 2 = nom de face avant (folder, cover, front…), 1 = nom quelconque ; les dos, CD, livrets… sont écartés."""
+    prio, bad = ('folder', 'cover', 'front', 'albumart', 'pochette', 'jaquette', 'recto'), \
+        ('back', 'cd', 'disc', 'booklet', 'inlay', 'inside', 'tray', 'verso', 'dos', 'label', 'livret')
+    dirs = [folder]
     for d in srcdirs:
-        for dd in (d, os.path.dirname(d)):
-            if not os.path.isdir(dd):
-                continue
-            for f in os.listdir(dd):
-                fl = f.lower()
-                if fl.endswith(('.jpg', '.jpeg', '.png')):
-                    score = 2 if fl.startswith(prio) else (0 if any(x in fl for x in bad) else 1)
-                    if score:
-                        cands.append((score, os.path.getsize(os.path.join(dd, f)), os.path.join(dd, f)))
-    for _, _, p in sorted(cands, reverse=True):
-        with open(p, 'rb') as fh:
-            if save_cover(fh.read(), folder, 'image déposée'):
-                return True
+        dirs += [d, os.path.dirname(d)]
+    for d in list(dirs):
+        if os.path.isdir(d):
+            dirs += [os.path.join(d, s) for s in os.listdir(d) if s.lower() in SCANS]
+    cands, seen = [], set()
+    for dd in dirs:
+        if not os.path.isdir(dd) or os.path.realpath(dd) in seen:
+            continue
+        seen.add(os.path.realpath(dd))
+        for f in os.listdir(dd):
+            fl = f.lower()
+            p = os.path.join(dd, f)
+            if fl.endswith(IMG_EXT) and fl != 'folder.jpg' and os.path.isfile(p):
+                score = 2 if fl.startswith(prio) else (0 if any(x in fl for x in bad) else 1)
+                if score:
+                    cands.append((score, os.path.getsize(p), p))
+    return sorted(cands, reverse=True)
+
+
+def cover_local(folder, cands, source):
+    for _, _, p in cands:
+        try:
+            with open(p, 'rb') as fh:
+                if save_cover(fh.read(), folder, f'{source} : {os.path.basename(p)}'):
+                    return True
+        except OSError:
+            continue
     return False
 
 
@@ -633,11 +693,16 @@ def covers(lib, ids, cand_dir, internet):
         if os.path.exists(os.path.join(f, 'folder.jpg')) or not os.path.isdir(f):
             continue
         aa, al, yr = info[f]
-        if cover_embedded(f):
+        # une jaquette déjà présente (nommée cover, front…) passe avant la pochette intégrée,
+        # souvent plus petite ; une image au nom quelconque ne vient qu'après
+        imgs = local_images(f, srcs)
+        if cover_local(f, [c for c in imgs if c[0] == 2], 'image présente'):
+            stats['image présente'] += 1
+        elif cover_embedded(f):
             stats['intégrée'] += 1
-        elif cover_local(f, srcs):
-            stats['image déposée'] += 1
-        elif internet and cover_online(f, aa, re.sub(r'\s*\((?:UK|US|édition \d+)\)', '', al), token):
+        elif cover_local(f, [c for c in imgs if c[0] == 1], 'image présente'):
+            stats['image présente'] += 1
+        elif internet and cover_online(f, aa, re.sub(rf'\s*\((?:{PAYS}|édition \d+)\)', '', al), token):
             stats['internet'] += 1
         else:
             cover_generated(f, aa, al, yr); stats['générée'] += 1

@@ -592,6 +592,8 @@ def fix_metadata(lib, db, ids, cand_dir):
                 it.disc = disc
             if comp:
                 it.albumartist = 'Various Artists'
+        elif not it.year:
+            it.year = from_path(od)[2]  # tags complets sauf l'année : celle du nom de dossier
         if not it.album:
             it.album = 'Titres divers'
         m = DISCALB.match(it.album)

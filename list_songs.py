@@ -199,17 +199,34 @@ def untar(p, dest):
 
 
 def extract_tool(p, dest):
-    """rar / 7z : outil externe (unrar, 7z, unar). Jamais d'invite de mot de passe : une archive protégée échoue."""
-    rar = p.lower().endswith('.rar')
-    cmds = ([['unrar', 'x', '-o-', '-p-', '-y', p, dest + '/']] if rar else []) + [
-        [z, 'x', '-y', '-paucun', f'-o{dest}', p] for z in ('7z', '7zz', '7za')] + [['unar', '-q', '-f', '-D', '-p', 'aucun', '-o', dest, p]]
+    """rar / 7z : outil externe (unrar, unar, 7z). Chaque outil installé est essayé tour à tour : le 7z de Debian,
+    par exemple, n'ouvre pas les RAR sans le paquet non-free p7zip-rar.
+    Jamais d'invite de mot de passe : une archive protégée échoue."""
+    seven = [[z, 'x', '-y', '-paucun', f'-o{dest}', p] for z in ('7z', '7zz', '7za')]
+    unar = [['unar', '-q', '-f', '-D', '-p', 'aucun', '-o', dest, p]]
+    cmds = [['unrar', 'x', '-o-', '-p-', '-y', p, dest + '/']] + unar + seven if p.lower().endswith('.rar') else seven + unar
+    errors = []
     for cmd in cmds:
-        if shutil.which(cmd[0]):
-            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-            if r.returncode:
-                raise RuntimeError((r.stdout.strip().splitlines() or [f'{cmd[0]} : erreur {r.returncode}'])[-1])
+        if not shutil.which(cmd[0]):
+            continue
+        r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, errors='replace')
+        if not r.returncode:
             return
-    raise RuntimeError('aucun outil installé : apt install 7zip unar')
+        lines = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+        # la ligne utile (ERROR: Unsupported Method…), pas le résumé final (« Compressed: 0 »)
+        err = next((l for l in lines if re.search(r'error|erreur|unsupported|cannot|can not|wrong|failed|corrupt|password', l, re.I)),
+                   lines[-1] if lines else f'erreur {r.returncode}')
+        errors.append(f'{cmd[0]} : {err}')
+        for x in os.listdir(dest):  # extraction partielle : on repart d'un dossier vide pour l'outil suivant
+            x = os.path.join(dest, x)
+            if os.path.isdir(x) and not os.path.islink(x):
+                shutil.rmtree(x)
+            else:
+                os.remove(x)
+    if not errors:
+        raise RuntimeError('aucun outil installé : apt install 7zip unar')
+    raise RuntimeError(' ; '.join(errors) + ('' if shutil.which('unar') else ' — essayez : apt install unar'))
 
 
 def extract_archives(simulation):

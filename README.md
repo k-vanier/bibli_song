@@ -29,6 +29,8 @@ using [beets](https://beets.io).
    cover; an image with another name is used only if there is no embedded cover; `back`, `cd`, `booklet`… are ignored.
 6. Regenerates a single directory page for both libraries: `musics/Annuaire.html` / `musics/Annuaire.csv`
    (filter by library, sort A–Z or by date added, download button next to each track).
+   The search box also lists the matching tracks (title, with artist or album words to narrow it down);
+   clicking one opens its album with the track highlighted.
    Date added: from beets, except for tracks of the initial import of a library (all on the same day), where the
    file date on disk is used; an album takes the date of its most recent track.
    Opened from the network share, the page also has foobar2000 buttons (play a track, play or add an album).

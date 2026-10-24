@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Range la musique déposée dans musics/Candidats vers les bibliothèques Low-Res et Hi-Res.
 
+  0. extrait les archives déposées (zip, rar, 7z, tar…), puis les supprime ;
   1. aiguille les fichiers vers la bonne bibliothèque selon leur format
      (MP3 → Musiques Low-Res, sans perte → Musiques Hi-Res) ;
   2. indexe les fichiers avec beets (lecture des tags, sans les modifier) ;
@@ -24,7 +25,7 @@ Usage :
   list_songs --sans-internet  pas de recherche de pochette en ligne
 """
 import argparse, colorsys, datetime, fcntl, hashlib, io, json, os, re, shutil, sqlite3, subprocess, sys
-import tempfile, textwrap, threading, time, urllib.parse, urllib.request
+import tarfile, tempfile, textwrap, threading, time, urllib.parse, urllib.request, zipfile
 from collections import Counter, defaultdict
 
 sys.path.insert(0, '/usr/share/beets')
@@ -54,6 +55,8 @@ LOW_EXT = ('.mp3',)
 HI_EXT = ('.flac', '.wav', '.aiff', '.aif', '.dsf', '.dff', '.wv', '.ape')
 OTHER_LOSSY = ('.wma', '.ogg', '.opus', '.aac', '.mpc')
 AUDIO_EXT = LOW_EXT + HI_EXT + OTHER_LOSSY + ('.m4a',)
+TAR_EXT = ('.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz')
+ARCHIVE_EXT = ('.zip', '.rar', '.7z') + TAR_EXT
 UA = 'list_songs/1.0 (bibliotheque musicale personnelle)'
 MINW = 500
 DEJA = '_déjà présents'
@@ -147,6 +150,128 @@ def audio_files(top):
         for f in files:
             if f.lower().endswith(AUDIO_EXT):
                 yield os.path.join(folder, f)
+
+
+# --------------------------------------------------------------------------- 0. archives
+
+PART = re.compile(r'\.part0*(\d+)\.rar$', re.I)
+
+
+def archive_ext(f):
+    fl = f.lower()
+    return next((e for e in sorted(ARCHIVE_EXT, key=len, reverse=True) if fl.endswith(e)), None)
+
+
+def archive_parts(p):
+    """Fichiers d'une archive en plusieurs volumes (x.part1.rar, x.part2.rar… ou x.rar, x.r00, x.r01…)."""
+    folder, f = os.path.split(p)
+    m = PART.search(f)
+    if m:
+        stem = f[:m.start()]
+        return [os.path.join(folder, x) for x in os.listdir(folder) if re.fullmatch(re.escape(stem) + PART.pattern, x, re.I)]
+    if f.lower().endswith('.rar'):
+        stem = f[:-4]
+        return [p] + [os.path.join(folder, x) for x in os.listdir(folder)
+                      if re.fullmatch(re.escape(stem) + r'\.r\d\d', x, re.I)]
+    return [p]
+
+
+def unzip(p, dest):
+    with zipfile.ZipFile(p) as z:
+        for info in z.infolist():
+            if not info.flag_bits & 0x800:
+                # nom non marqué UTF-8 : lu en cp437 par Python, alors que Windows l'a souvent écrit en UTF-8 ou cp850
+                for enc in ('utf-8', 'cp850'):
+                    try:
+                        info.filename = info.filename.encode('cp437').decode(enc); break
+                    except UnicodeError:
+                        continue
+            z.extract(info, dest)
+
+
+def untar(p, dest):
+    with tarfile.open(p) as t:
+        try:
+            t.extractall(dest, filter='data')  # refuse les chemins qui sortent du dossier
+        except TypeError:
+            t.extractall(dest, members=[m for m in t.getmembers() if not (m.name.startswith('/') or '..' in m.name.split('/'))
+                                        and (m.isfile() or m.isdir())])
+
+
+def extract_tool(p, dest):
+    """rar / 7z : outil externe (unrar, 7z, unar). Jamais d'invite de mot de passe : une archive protégée échoue."""
+    rar = p.lower().endswith('.rar')
+    cmds = ([['unrar', 'x', '-o-', '-p-', '-y', p, dest + '/']] if rar else []) + [
+        [z, 'x', '-y', '-paucun', f'-o{dest}', p] for z in ('7z', '7zz', '7za')] + [['unar', '-q', '-f', '-D', '-p', 'aucun', '-o', dest, p]]
+    for cmd in cmds:
+        if shutil.which(cmd[0]):
+            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            if r.returncode:
+                raise RuntimeError((r.stdout.strip().splitlines() or [f'{cmd[0]} : erreur {r.returncode}'])[-1])
+            return
+    raise RuntimeError('aucun outil installé : apt install 7zip unar')
+
+
+def extract_archives(simulation):
+    """Extrait les archives déposées dans Candidats, chacune à côté d'elle, puis les supprime.
+    Une archive qui ne contient qu'un dossier donne ce dossier ; sinon son contenu va dans un dossier du nom de l'archive.
+    Une archive illisible, protégée ou dont la destination existe déjà reste en place.
+    Les archives contenues dans une archive sont extraites à leur tour."""
+    done, failed = 0, set()
+    for _ in range(5):  # archives dans des archives
+        todo = []
+        for folder, dirs, files in os.walk(CAND):
+            if hidden(os.path.relpath(folder, CAND)):
+                dirs[:] = []; continue
+            for f in sorted(files):
+                p = os.path.join(folder, f)
+                m = PART.search(f)
+                if archive_ext(f) and p not in failed and (not m or int(m.group(1)) == 1):
+                    todo.append(p)
+        if not todo:
+            break
+        for k, p in enumerate(todo, 1):
+            rel = os.path.relpath(p, CAND)
+            if simulation:
+                say(f'  archive à extraire : {rel}'); failed.add(p); done += 1; continue
+            SPIN.set(f'Extraction des archives {k}/{len(todo)} : {os.path.basename(p)}')
+            folder, f = os.path.split(p)
+            m = PART.search(f)
+            stem = f[:m.start()] if m else f[:-len(archive_ext(f))]
+            tmp = tempfile.mkdtemp(prefix='.extraction-', dir=folder)  # caché : ignoré tant qu'il n'est pas complet
+            try:
+                if f.lower().endswith('.zip'):
+                    unzip(p, tmp)
+                elif f.lower().endswith(TAR_EXT):
+                    untar(p, tmp)
+                else:
+                    extract_tool(p, tmp)
+                for junk in ('__MACOSX', '.DS_Store', 'Thumbs.db'):  # __MACOSX contient des ._01.mp3 qui ne sont pas de l'audio
+                    j = os.path.join(tmp, junk)
+                    if os.path.isdir(j):
+                        shutil.rmtree(j)
+                    elif os.path.exists(j):
+                        os.remove(j)
+                inside = os.listdir(tmp)
+                if not inside:
+                    raise RuntimeError('archive vide')
+                if len(inside) == 1 and os.path.isdir(os.path.join(tmp, inside[0])):
+                    src, dest = os.path.join(tmp, inside[0]), os.path.join(folder, inside[0])
+                else:
+                    src, dest = tmp, os.path.join(folder, stem)
+                if os.path.exists(dest):
+                    raise RuntimeError(f'« {os.path.basename(dest)} » existe déjà à côté (archive déjà extraite ?)')
+                os.rename(src, dest)
+            except Exception as e:
+                say(f'  archive non extraite, laissée en place : {rel} ({e})')
+                failed.add(p); continue
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+            for x in archive_parts(p):
+                os.remove(x)
+            say(f'  archive extraite : {rel} → {os.path.relpath(dest, CAND)}/')
+            done += 1
+    return done
 
 
 # --------------------------------------------------------------------------- 1. aiguillage
@@ -1126,6 +1251,13 @@ def main():
     say(f'Rangement {LOT}' + (' — SIMULATION, rien ne sera rangé' if args.simulation else ''))
     os.makedirs(CAND, exist_ok=True)
     restore_stage()  # restes d'un lancement interrompu
+    for folder, dirs, _ in os.walk(CAND):
+        for d in [d for d in dirs if d.startswith('.extraction-')]:  # extraction interrompue : l'archive est toujours là
+            shutil.rmtree(os.path.join(folder, d), ignore_errors=True); dirs.remove(d)
+    say('\n--- Extraction des archives')
+    SPIN.set('Extraction des archives')
+    n = extract_archives(args.simulation)
+    say(f'  {n} archive(s) ' + ('à extraire (non extraites en simulation)' if args.simulation else 'extraite(s)'))
     say('\n--- Aiguillage par format')
     SPIN.set('Aiguillage par format')
     moved, ignored = route()

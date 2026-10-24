@@ -6,6 +6,12 @@ using [beets](https://beets.io).
 
 ## What the script does
 
+0. Extracts the archives dropped into `Candidats/` (`.zip`, `.rar` including multi-volume, `.7z`, `.tar`, `.tar.gz`…),
+   each next to itself, then deletes the archive; archives inside archives are extracted too. An archive holding a
+   single folder gives that folder; otherwise its content goes into a folder named after the archive.
+   An unreadable or password-protected archive, or one whose target folder already exists, stays in place.
+   If there is no archive, the script goes straight to the next step. `.zip` and `.tar` need nothing extra;
+   `.rar` and `.7z` need `unrar`, `7z` or `unar` (see Requirements).
 1. Routes files to the right library based on their format.
 2. Imports them with beets **without modifying tags** (`-A -C -W`).
 3. Fills in missing metadata from folder names (artist, album, year, disc),
@@ -54,6 +60,7 @@ Environment variables: `RANGER_ROOT` (the `musics/` folder containing `Candidats
 ## Requirements
 
 - Debian: `apt install beets python3-pil python3-mediafile python3-unidecode fonts-dejavu-core`
+- Archives `.rar` / `.7z`: `apt install 7zip unar` (or `p7zip-full`; `unrar` from non-free also works).
 - beets configurations: see `exemples/` (Low-Res in `~/.config/beets`, Hi-Res in `~/.config/beets/hires`).
 - Directory pages: copy `annuaire/` to `~/.config/beets/annuaire/`.
 - Discogs (optional): personal token in `~/discog` (chmod 600) — **never commit it**.

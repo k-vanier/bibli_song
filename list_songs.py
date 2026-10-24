@@ -35,7 +35,22 @@ from mediafile import MediaFile  # noqa: E402
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 from unidecode import unidecode  # noqa: E402
 
-ROOT = os.environ.get('RANGER_ROOT', '/srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics/')
+CONF = '/etc/list_songs.conf'  # écrit par installer.sh : MUSICS='/chemin/du/dossier/musics'
+
+
+def musics_conf():
+    """Dossier musics choisi à l'installation, sinon celui du serveur d'origine."""
+    try:
+        for line in open(CONF, encoding='utf-8'):
+            k, _, v = line.strip().partition('=')
+            if k == 'MUSICS' and v.strip(' \'"'):
+                return v.strip(' \'"').rstrip('/') + '/'
+    except OSError:
+        pass
+    return '/srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics/'
+
+
+ROOT = os.environ.get('RANGER_ROOT') or musics_conf()
 HOME = os.environ.get('RANGER_HOME', os.path.expanduser('~'))
 CANDIDATS = 'Candidats'
 CAND = os.path.join(ROOT, CANDIDATS)

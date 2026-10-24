@@ -67,7 +67,7 @@ both libraries and `.beets/` with both beets configurations and two empty databa
 `annuaire-regenerer` commands in `/usr/local/bin` and builds the directory page. Then just drop music into
 `Candidats/` and run `list_songs`.
 
-With `--samba`, the share is `\<server IP>\musics`, user = the account, password = the Samba password typed during
+With `--samba`, the share is `\\<server IP>\musics`, user = the account, password = the Samba password typed during
 the installation. Under WSL, the machine name is the Windows PC's own name, so use the IP address (`hostname -I`),
 which changes when WSL restarts; in NAT mode only that PC can reach it. Run a single Samba at a time across WSL
 distributions: they share the network, and two servers on port 445 answer connections at random.

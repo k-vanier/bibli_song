@@ -61,7 +61,6 @@ td.dl{width:2.6em;padding:4px 8px 4px 0;text-align:right}
 .dlb:hover{background:var(--accent);color:var(--panel)}
 .dlb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .dlb svg{width:16px;height:16px}
-.tip{color:var(--muted);font-size:12px;padding:8px 18px;border-bottom:1px solid var(--line);background:var(--chip)}
 .acts{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 .btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;background:var(--accent-soft);color:var(--accent);text-decoration:none;font-size:13px;font-weight:600}
 .btn:hover{background:var(--accent);color:var(--panel)}
@@ -184,7 +183,6 @@ function openAlbum(i, j) {
     <div class="sub">Ajouté le ${JOUR.format(new Date(a.ad * 1000))}</div>
     <div class="path">${esc(a.p)}</div>
     ${LOCAL ? `<div class="acts"><a class="btn" href="${fb('play', a.p)}">${PLAY} Lire dans foobar</a><a class="btn" href="${fb('add', a.p)}">${ADD} Ajouter à foobar</a></div>` : ''}</div><button class="close" aria-label="Fermer">✕</button></div>
-    ${LOCAL ? '<div class="tip">▶ ouvre dans foobar2000 (une fois par PC : double-cliquer <b>musics\\foobar\\Installer le lien foobar.cmd</b>). Pour télécharger : clic droit sur ⬇ puis « Enregistrer le lien sous… ».</div>' : ''}
     <div class="tl"><table>${rows}</table></div>`;
   dlg.querySelector('.close').onclick = () => dlg.close();
   dlg.showModal();

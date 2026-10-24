@@ -50,16 +50,26 @@ On a fresh Debian or Ubuntu server:
 ```
 sudo apt install -y git
 git clone https://github.com/k-vanier/DEV.git ~/DEV
-sudo ~/DEV/list_songs/installer.sh --discogs --domaine name.freeboxos.fr --port-externe 8081
+sudo ~/DEV/list_songs/installer.sh
 ```
 
-`installer.sh` installs the packages (beets, Pillow, mediafile, unidecode, DejaVu fonts, unar, 7-Zip), creates
-`musics/` with `Candidats/`, both libraries and `.beets/`, writes both beets configurations from `exemples/`,
-installs the `list_songs` and `annuaire-regenerer` commands in `/usr/local/bin`, then builds the directory page.
-Options: `--musics PATH` (another music folder), `--utilisateur NAME` (account that runs list_songs, default: the one
-that ran sudo), `--discogs` (asks for the Discogs token), `--samba` (shares `musics/` on the network; not on
-openmediavault, use its interface), `--domaine` / `--port-externe` (HTTPS, see below). Nothing that already exists is
-overwritten, so it can be run again. To restore from a backup, put `musics/` back first, then run it.
+`installer.sh` asks its questions first, shows a summary, then installs without stopping:
+
+- where to create the music folder (it shows the free space per disk and proposes the folder already configured,
+  the original server's folder or a data disk), and which account runs list_songs;
+- if a beets database already exists there: keep it, or start from an empty one (the old one is saved in
+  `.beets/journal/`); an old `~/.config/beets` can be taken over;
+- Discogs token, Samba share (not on openmediavault: use its interface), HTTPS publishing (domain, external port).
+
+It then installs the packages (beets, Pillow, mediafile, unidecode, DejaVu fonts, unar, 7-Zip), saves the chosen
+folder in `/etc/list_songs.conf` (read by `list_songs`, `regenerer.sh` and `publier-https.sh`), creates `Candidats/`,
+both libraries and `.beets/` with both beets configurations and two empty databases, installs the `list_songs` and
+`annuaire-regenerer` commands in `/usr/local/bin` and builds the directory page. Then just drop music into
+`Candidats/` and run `list_songs`.
+
+Every answer can also be given as an option (`--musics`, `--utilisateur`, `--base garder|vider`, `--discogs`,
+`--samba`, `--domaine`, `--port-externe`); `--oui` asks nothing and uses the defaults. Nothing that already exists is
+overwritten, so it can be run again. To restore from a backup, put the music folder back first, then run it.
 
 ## Usage
 
@@ -75,7 +85,7 @@ overwritten, so it can be run again. To restore from a backup, put `musics/` bac
 ./list_songs --retirer "Artistes/X/(2004) Album/01 - Titre.flac"  # or a track
 ```
 
-Environment variables: `RANGER_ROOT` (the `musics/` folder containing `Candidats` and the libraries), `RANGER_HOME`.
+The `musics/` folder comes from `/etc/list_songs.conf`; the `RANGER_ROOT` environment variable overrides it (`RANGER_HOME` too).
 
 ## Requirements
 

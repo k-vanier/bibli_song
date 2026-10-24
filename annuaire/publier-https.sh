@@ -11,7 +11,9 @@ set -euo pipefail
 
 DOMAINE=${1:-}
 PORT_EXT=${2:-8443}
-MUSICS=${MUSICS:-/srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics}
+# dossier musics : variable MUSICS, sinon /etc/list_songs.conf (écrit par installer.sh), sinon celui du serveur
+M=${MUSICS:-}; MUSICS=; [ -r /etc/list_songs.conf ] && . /etc/list_songs.conf
+MUSICS=${M:-${MUSICS:-/srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics}}; MUSICS=${MUSICS%/}
 HTTP=8080
 HTTPS=8443
 CONF=/etc/nginx/conf.d/annuaire.conf

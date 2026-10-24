@@ -67,6 +67,11 @@ both libraries and `.beets/` with both beets configurations and two empty databa
 `annuaire-regenerer` commands in `/usr/local/bin` and builds the directory page. Then just drop music into
 `Candidats/` and run `list_songs`.
 
+Each successful step is recorded in `/var/lib/list_songs/` (with the answers, never the Discogs token). If a step
+fails, the script says which one and how to resume: run it again and it offers to resume where it stopped, with the
+same answers, skipping the validated steps, or to start over. Once an installation is finished, running it again
+asks whether to redo it. `--reprendre` / `--recommencer` skip that question.
+
 Every answer can also be given as an option (`--musics`, `--utilisateur`, `--base garder|vider`, `--discogs`,
 `--samba`, `--domaine`, `--port-externe`); `--oui` asks nothing and uses the defaults. Nothing that already exists is
 overwritten, so it can be run again. To restore from a backup, put the music folder back first, then run it.

@@ -208,18 +208,22 @@ touch "$ETAT/etapes"
 
 # ---------------------------------------------------------------- étapes
 en_tant_que() { runuser -u "$UTIL" -- env HOME="$MAISON" "$@"; }
-# sortie d'apt masquée, affichée seulement en cas d'échec
+# sortie d'apt masquée, affichée seulement en cas d'échec ; jamais de question d'apt (aussi lors d'une reprise),
+# et apt ne lit pas le clavier (il avalerait ce qui est tapé pour la suite, comme le mot de passe Samba)
+export DEBIAN_FRONTEND=noninteractive
 JOURNAL_APT=$(mktemp)
 paquets() {
   echo "installation : $*"
-  apt-get install -y -qq -o Dpkg::Use-Pty=0 "$@" >"$JOURNAL_APT" 2>&1 || { cat "$JOURNAL_APT" >&2; return 1; }
+  apt-get install -y -qq -o Dpkg::Use-Pty=0 "$@" </dev/null >"$JOURNAL_APT" 2>&1 || { cat "$JOURNAL_APT" >&2; return 1; }
 }
 ICI=$(dirname "$(readlink -f "$0")")
 if [ -f "$ICI/list_songs.py" ]; then LS=$ICI; else LS=$MAISON/DEV/list_songs; fi
+# adresse à taper depuis Windows ; sous WSL, le nom de la machine est celui du PC Windows lui-même
+IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+WSL=0; grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null && WSL=1
 
 etape_paquets() {
-  export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
+  apt-get update -qq </dev/null
   paquets git sudo beets python3-pil python3-mediafile python3-unidecode fonts-dejavu-core unar
   # 7z pour les archives .7z (et .rar en secours) : paquet « 7zip » récent, sinon « p7zip-full »
   paquets 7zip 2>/dev/null || paquets p7zip-full
@@ -339,8 +343,26 @@ etape_samba() {
 EOF
     testparm -s >/dev/null 2>&1 && systemctl restart smbd
   fi
-  pdbedit -L 2>/dev/null | grep -q "^$UTIL:" || { echo "Mot de passe réseau (Samba) pour $UTIL :"; smbpasswd -a "$UTIL"; }
-  echo "partage : \\\\$(hostname)\\musics"
+  # visible dans « Réseau » sous Windows (WS-Discovery) ; pas sous WSL, inaccessible depuis le réseau
+  if [ $WSL = 0 ]; then
+    paquets wsdd 2>/dev/null || echo "(wsdd indisponible : le serveur n'apparaîtra pas dans « Réseau », l'adresse marche quand même)"
+  fi
+  if ! pdbedit -L 2>/dev/null | grep -q "^$UTIL:"; then
+    echo "Mot de passe Samba pour $UTIL : celui à taper depuis Windows (il peut être différent du mot de passe Linux)"
+    smbpasswd -a "$UTIL"
+  fi
+  partage_info
+}
+
+partage_info() {
+  echo "partage : \\\\${IP:-<adresse du serveur>}\\musics   (utilisateur : $UTIL, mot de passe : celui de Samba)"
+  if [ $WSL = 1 ]; then
+    echo "WSL : \\\\$(hostname) désigne le PC Windows lui-même, pas ce Linux : utiliser l'adresse IP ci-dessus."
+    echo "      Elle change à chaque redémarrage de WSL (hostname -I pour la retrouver) ; en mode réseau NAT,"
+    echo "      seul ce PC y a accès, pas les autres appareils du réseau."
+  else
+    echo "     ou \\\\$(hostname)\\musics"
+  fi
 }
 
 etape_annuaire() { en_tant_que "$LS/annuaire/regenerer.sh"; }
@@ -372,5 +394,6 @@ Annuaire            : $MUSICS/Annuaire.html (régénérer : annuaire-regenerer)
 À sauvegarder       : $MUSICS (musique + .beets/)$([ -s "$MAISON/discog" ] && echo " et $MAISON/discog")
 EOF
 [ -n "$DOMAINE" ] && echo "Annuaire en ligne   : https://$DOMAINE:$PORT_EXT/"
+if [ "$SAMBA" = 1 ] && [ $OMV = 0 ]; then echo; partage_info; fi
 [ $OMV = 1 ] && echo "Partage réseau      : à créer dans openmediavault (Services → SMB/CIFS) s'il n'existe pas"
 exit 0

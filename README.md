@@ -43,6 +43,23 @@ using [beets](https://beets.io).
 7. Cleans up `Candidats/`: once an album is imported, its remaining files (images, `.cue`, `.nfo`…)
    are deleted. Anything that could not be imported (unsupported format, unreadable file) stays in place.
 
+## Installing from scratch
+
+On a fresh Debian or Ubuntu server:
+
+```
+git clone https://github.com/k-vanier/DEV.git ~/DEV
+sudo ~/DEV/list_songs/installer.sh --discogs --domaine name.freeboxos.fr --port-externe 8081
+```
+
+`installer.sh` installs the packages (beets, Pillow, mediafile, unidecode, DejaVu fonts, unar, 7-Zip), creates
+`musics/` with `Candidats/`, both libraries and `.beets/`, writes both beets configurations from `exemples/`,
+installs the `list_songs` and `annuaire-regenerer` commands in `/usr/local/bin`, then builds the directory page.
+Options: `--musics PATH` (another music folder), `--utilisateur NAME` (account that runs list_songs, default: the one
+that ran sudo), `--discogs` (asks for the Discogs token), `--samba` (shares `musics/` on the network; not on
+openmediavault, use its interface), `--domaine` / `--port-externe` (HTTPS, see below). Nothing that already exists is
+overwritten, so it can be run again. To restore from a backup, put `musics/` back first, then run it.
+
 ## Usage
 
 ```

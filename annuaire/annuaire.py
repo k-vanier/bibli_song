@@ -2,7 +2,7 @@
 """Génère Annuaire.html et Annuaire.csv à la racine du dossier musics, pour toutes les bibliothèques.
 
 Usage : annuaire.py <dossier musics> <bibliothèque>:<base beets> [<bibliothèque>:<base beets>…]
-  ex. : annuaire.py …/musics "Musiques Low-Res:~/.config/beets/library.db" "Musiques Hi-Res:~/.config/beets/hires/library.db"
+  ex. : annuaire.py …/musics "Musiques Low-Res:…/musics/.beets/lowres/library.db" "Musiques Hi-Res:…/musics/.beets/hires/library.db"
 Les métadonnées viennent de beets ; un fichier audio absent de la base est
 listé d'après son nom. Les anciens annuaires par bibliothèque sont supprimés.
 """

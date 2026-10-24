@@ -40,17 +40,21 @@ HOME = os.environ.get('RANGER_HOME', os.path.expanduser('~'))
 CANDIDATS = 'Candidats'
 CAND = os.path.join(ROOT, CANDIDATS)
 STAGE = os.path.join(CAND, '.en-cours')  # dossier de travail, un sous-dossier par bibliothèque
+# bases beets, configurations et journaux, rangés avec la musique pour être sauvegardés avec elle
+BEETS = ROOT + '.beets'
+BEETS_ANCIEN = HOME + '/.config/beets'  # ancien emplacement, déplacé automatiquement (migrate_beets)
 LIBS = {
-    'low': dict(nom='Musiques Low-Res', dir=ROOT + 'Musiques Low-Res', beetsdir=HOME + '/.config/beets',
+    'low': dict(nom='Musiques Low-Res', dir=ROOT + 'Musiques Low-Res', beetsdir=BEETS + '/lowres',
                 stage=os.path.join(STAGE, 'low')),
-    'hi': dict(nom='Musiques Hi-Res', dir=ROOT + 'Musiques Hi-Res', beetsdir=HOME + '/.config/beets/hires',
+    'hi': dict(nom='Musiques Hi-Res', dir=ROOT + 'Musiques Hi-Res', beetsdir=BEETS + '/hires',
                stage=os.path.join(STAGE, 'hi')),
 }
-JOURNAL = HOME + '/.config/beets/journal'
+JOURNAL = BEETS + '/journal'
 EMPREINTES = ROOT + 'empreintes.db'  # cache des empreintes, rangé avec la musique
-EMPREINTES_ANCIEN = HOME + '/.config/beets/empreintes.db'
-ANNUAIRE = HOME + '/.config/beets/annuaire/annuaire.py'
-DISCOGS_TOKEN = HOME + '/discog'
+ANNUAIRE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'annuaire', 'annuaire.py')
+DISCOGS_TOKEN = HOME + '/discog'  # secret : reste hors de musics/, qui est partagé sur le réseau
+# config lue par beets dans ce processus (et dans annuaire.py) ; sinon beets lirait ~/.config/beets
+os.environ['BEETSDIR'] = LIBS['low']['beetsdir']
 LOW_EXT = ('.mp3',)
 HI_EXT = ('.flac', '.wav', '.aiff', '.aif', '.dsf', '.dff', '.wv', '.ape')
 OTHER_LOSSY = ('.wma', '.ogg', '.opus', '.aac', '.mpc')
@@ -1227,6 +1231,48 @@ def verification(simulation):
     say(f'\nRapport détaillé : {report}')
 
 
+def migrate_beets():
+    """Déplace l'ancien ~/.config/beets vers musics/.beets (lowres/, hires/, journal/), une seule fois.
+    Copie d'abord, corrige les chemins des configs, puis renomme l'ancien dossier en ~/.config/beets.ancien-<lot>
+    au lieu de le supprimer. annuaire/ n'est pas repris : l'annuaire est maintenant lancé depuis le dépôt."""
+    if os.path.exists(BEETS) or not os.path.exists(BEETS_ANCIEN + '/library.db'):
+        return
+    os.makedirs(BEETS_ANCIEN + '/journal', exist_ok=True)
+    lock = open(BEETS_ANCIEN + '/journal/.ranger.lock', 'w')  # même verrou que l'ancienne version du script
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit('Un rangement est déjà en cours.')
+    tmp = BEETS + '.migration'
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp + '/lowres')
+    for name in os.listdir(BEETS_ANCIEN):
+        src = os.path.join(BEETS_ANCIEN, name)
+        if name == 'annuaire':
+            continue
+        if name == 'empreintes.db':  # cache encore à l'ancien emplacement
+            if not os.path.exists(EMPREINTES):
+                shutil.copy2(src, EMPREINTES)
+            continue
+        dst = os.path.join(tmp, name) if name in ('hires', 'journal') else os.path.join(tmp, 'lowres', name)
+        if os.path.isdir(src) and not os.path.islink(src):
+            shutil.copytree(src, dst, symlinks=True)
+        else:
+            shutil.copy2(src, dst, follow_symlinks=False)
+    # « library: ~/.config/beets/library.db », « log: /home/…/.config/beets/hires/import.log »…
+    old = re.compile(r'(?:~|' + re.escape(HOME) + r')/\.config/beets(/hires)?(?![\w.-])')
+    for sub in ('lowres', 'hires'):
+        cfg = os.path.join(tmp, sub, 'config.yaml')
+        if os.path.exists(cfg):
+            text = open(cfg, encoding='utf-8').read()
+            open(cfg, 'w', encoding='utf-8').write(old.sub(lambda m: BEETS + ('/hires' if m.group(1) else '/lowres'), text))
+    os.rename(tmp, BEETS)
+    lock.close()  # le verrou est dans l'ancien dossier : le relâcher avant de le renommer
+    os.rename(BEETS_ANCIEN, f'{BEETS_ANCIEN}.ancien-{LOT}')
+    print(f'Bases et configurations beets déplacées dans {BEETS}/\n'
+          f'(ancien dossier conservé : {BEETS_ANCIEN}.ancien-{LOT}, à supprimer quand tout fonctionne)')
+
+
 def main():
     global LOGF, EMP
     ap = argparse.ArgumentParser(description='Range la musique déposée dans musics/Candidats.')
@@ -1243,14 +1289,16 @@ def main():
                     help='recalcule toutes les empreintes sans le cache et vérifie les bibliothèques (base, disque, '
                          'doublons, pochettes), puis s\'arrête ; avec --simulation, ne corrige rien')
     args = ap.parse_args()
+    migrate_beets()
+    for lib in LIBS.values():
+        if not os.path.exists(lib['beetsdir'] + '/config.yaml'):
+            sys.exit(f'Configuration beets introuvable : {lib["beetsdir"]}/config.yaml (modèles dans exemples/)')
     os.makedirs(JOURNAL, exist_ok=True)
     lock = open(f'{JOURNAL}/.ranger.lock', 'w')
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         sys.exit('Un rangement est déjà en cours.')
-    if not os.path.exists(EMPREINTES) and os.path.exists(EMPREINTES_ANCIEN):
-        shutil.move(EMPREINTES_ANCIEN, EMPREINTES)  # ancien emplacement du cache
     EMP = Empreintes(EMPREINTES)
     if args.empreintes:
         build_hashes()

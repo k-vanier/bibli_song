@@ -1,5 +1,5 @@
 directory: /srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics/Musiques Hi-Res
-library: ~/.config/beets/hires/library.db
+library: /srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics/.beets/hires/library.db
 
 plugins: inline
 
@@ -11,7 +11,7 @@ import:
   move: no
   copy: no
   write: no
-  log: ~/.config/beets/hires/import.log
+  log: /srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics/.beets/hires/import.log
 
 item_fields:
   disc_prefix: '"%d-" % disc if disctotal and disctotal > 1 and track else ""'

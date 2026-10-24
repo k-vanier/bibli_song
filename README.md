@@ -66,6 +66,16 @@ Environment variables: `RANGER_ROOT` (the `musics/` folder containing `Candidats
 - beets configurations: see `exemples/` (Low-Res in `musics/.beets/lowres/config.yaml`, Hi-Res in `musics/.beets/hires/config.yaml`).
 - Discogs (optional): personal token in `~/discog` (chmod 600) — **never commit it**.
 
+## Publishing the directory page over HTTPS
+
+`sudo annuaire/publier-https.sh <domain> [external port]` serves `musics/` with nginx on port 8443, behind a password
+and with a Let's Encrypt certificate (example: `sudo annuaire/publier-https.sh name.freeboxos.fr 8081`).
+Beforehand, in the router: forward external port 80 to this server's port 8080 (needed by Let's Encrypt, keep it
+for renewals) and the chosen external port to 8443. The script installs nginx, certbot and apache2-utils, asks for a
+user name and password, refuses to run if 8080 or 8443 is used by another program, hides `.beets/`, `Candidats/` and
+`*.db`, and sets up automatic renewal. It can be run again safely; add a user with
+`sudo htpasswd -B /etc/nginx/annuaire.htpasswd <name>`.
+
 ## Removing a track or an album
 
 `--retirer PATH…` removes cleanly: files (plus the cover / extra files if the album has no music left),

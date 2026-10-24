@@ -22,7 +22,7 @@ using [beets](https://beets.io).
    if only the name matches (different content), it is set aside in `Candidats/_déjà présents/`.
    A missing track of an existing album is added.
    Comparison uses BLAKE2 hashes, only between files of the same size; the library hashes are cached
-   in `musics/empreintes.db` (the old cache `~/.config/beets/empreintes.db` is moved there automatically).
+   in `musics/empreintes.db`.
 5. `folder.jpg` cover: image already present (in the album folder of the library, the dropped folder,
    its parent or a `Scans`/`Artwork`/`Covers` subfolder) → embedded → Deezer → iTunes → Cover Art Archive
    → Discogs → generated. A present image named `cover`, `front`, `folder`, `jaquette`… wins over the embedded
@@ -63,8 +63,7 @@ Environment variables: `RANGER_ROOT` (the `musics/` folder containing `Candidats
 
 - Debian: `apt install beets python3-pil python3-mediafile python3-unidecode fonts-dejavu-core`
 - Archives `.rar` / `.7z`: `apt install 7zip unar` (or `p7zip-full`; `unrar` from non-free also works).
-- beets configurations: see `exemples/` (Low-Res in `~/.config/beets`, Hi-Res in `~/.config/beets/hires`).
-- Directory pages: copy `annuaire/` to `~/.config/beets/annuaire/`.
+- beets configurations: see `exemples/` (Low-Res in `musics/.beets/lowres/config.yaml`, Hi-Res in `musics/.beets/hires/config.yaml`).
 - Discogs (optional): personal token in `~/discog` (chmod 600) — **never commit it**.
 
 ## Removing a track or an album
@@ -82,6 +81,23 @@ before deleting (`--oui` to skip the prompt, `--simulation` to only preview). Re
 database entries whose file has disappeared (removed from the database, after a backup), audio files
 missing from the database, identical files present several times (even under another name), albums without
 a cover, leftovers from an interrupted run, stale cache entries. No music file is deleted or moved.
-Report: `~/.config/beets/journal/verification_<date>.tsv`.
+Report: `musics/.beets/journal/verification_<date>.tsv`.
 
-A log is written to `~/.config/beets/journal/ranger_<date>.log` and the beets database is backed up before each run.
+A log is written to `musics/.beets/journal/ranger_<date>.log` and the beets database is backed up before each run.
+
+## Where things are, and what to back up
+
+Everything needed to rebuild the libraries is in `musics/`, so backing up `musics/` is enough:
+
+- the music and its `folder.jpg` covers;
+- `musics/.beets/lowres/` and `musics/.beets/hires/`: beets configuration (`config.yaml`) and database (`library.db`).
+  The script never writes tags (`-W`), so metadata it fills in from folder names and the dates added exist only there;
+- `musics/.beets/journal/`: logs, and a copy of each database taken before each run.
+
+Only the Discogs token `~/discog` stays outside `musics/`, since `musics/` is shared on the network: back it up separately.
+`musics/empreintes.db`, `Annuaire.html`, `Annuaire.csv` and `musics/foobar/` are rebuilt automatically.
+
+Older versions kept the beets folder in `~/.config/beets`. The first run moves it to `musics/.beets/` (fixing the paths
+in both `config.yaml`) and renames the old folder `~/.config/beets.ancien-<date>`; delete it once everything works.
+To run beets by hand: `BEETSDIR=musics/.beets/lowres beet ls …` (or `.beets/hires`).
+To rebuild only the directory page: `annuaire/regenerer.sh`.

@@ -55,10 +55,12 @@ en_tant_que() { runuser -u "$UTIL" -- env HOME="$MAISON" "$@"; }
 
 etape "Paquets ($PRETTY_NAME)"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
-apt-get install -y -q git sudo beets python3-pil python3-mediafile python3-unidecode fonts-dejavu-core unar
+# sortie d'apt masquée, ses erreurs restent affichées
+paquets() { echo "installation : $*"; apt-get install -y -qq -o Dpkg::Use-Pty=0 "$@" >/dev/null; }
+apt-get update -qq
+paquets git sudo beets python3-pil python3-mediafile python3-unidecode fonts-dejavu-core unar
 # 7z pour les archives .7z (et .rar en secours) : paquet « 7zip » récent, sinon « p7zip-full »
-apt-get install -y -q 7zip 2>/dev/null || apt-get install -y -q p7zip-full
+paquets 7zip 2>/dev/null || paquets p7zip-full
 PYTHONPATH=/usr/share/beets python3 -c 'import beets, mediafile, PIL, unidecode' \
   || { echo "Modules Python manquants (beets, mediafile, PIL, unidecode)"; exit 1; }
 
@@ -137,7 +139,7 @@ if [ $SAMBA = 1 ]; then
   if [ $OMV = 1 ]; then
     echo "openmediavault : créer le partage dans son interface (Services → SMB/CIFS), sinon il serait écrasé."
   else
-    apt-get install -y -q samba
+    paquets samba
     if grep -q '^\[musics\]' /etc/samba/smb.conf; then
       echo "partage [musics] déjà présent"
     else
@@ -174,7 +176,7 @@ cat <<EOF
 Musique à ranger    : $MUSICS/Candidats/
 Ranger              : list_songs --simulation, puis list_songs
 Annuaire            : $MUSICS/Annuaire.html (régénérer : annuaire-regenerer)
-À sauvegarder       : $MUSICS (musique + .beets/) et $MAISON/discog
+À sauvegarder       : $MUSICS (musique + .beets/)$([ -s "$MAISON/discog" ] && echo " et $MAISON/discog")
 EOF
 [ -n "$DOMAINE" ] && echo "Annuaire en ligne   : https://$DOMAINE:$PORT_EXT/"
 [ $OMV = 1 ] && [ $SAMBA = 0 ] && echo "Partage réseau      : à créer dans openmediavault (Services → SMB/CIFS) s'il n'existe pas"

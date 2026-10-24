@@ -48,6 +48,7 @@ using [beets](https://beets.io).
 On a fresh Debian or Ubuntu server:
 
 ```
+sudo apt install -y git
 git clone https://github.com/k-vanier/DEV.git ~/DEV
 sudo ~/DEV/list_songs/installer.sh --discogs --domaine name.freeboxos.fr --port-externe 8081
 ```

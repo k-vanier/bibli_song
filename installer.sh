@@ -1,11 +1,11 @@
 #!/bin/bash
-# Installe list_songs de zéro sur Debian / Ubuntu, en posant les questions au début :
+# Installe bibli_song de zéro sur Debian / Ubuntu, en posant les questions au début :
 # où créer le dossier musics, quel compte, base beets, jeton Discogs, partage Samba, HTTPS.
-# À la fin, tout est prêt : il suffit de déposer la musique dans <musics>/Candidats/ puis de lancer list_songs.
+# À la fin, tout est prêt : il suffit de déposer la musique dans <musics>/Candidats/ puis de lancer bibli_song.
 #
 # Usage : sudo ./installer.sh [options]
 #   --musics CHEMIN        dossier musics (sinon demandé)
-#   --utilisateur NOM      compte qui lance list_songs (sinon demandé ; défaut : celui qui a fait sudo)
+#   --utilisateur NOM      compte qui lance bibli_song (sinon demandé ; défaut : celui qui a fait sudo)
 #   --base garder|vider    base beets déjà présente : la garder, ou repartir d'une base vide (l'ancienne est sauvegardée)
 #   --discogs              demande le jeton Discogs (pochettes) et l'enregistre dans ~/discog
 #   --samba                partage le dossier musics sur le réseau (pas sur openmediavault : passer par son interface)
@@ -15,7 +15,7 @@
 #   --recommencer          refait toute l'installation sans le demander
 #   --oui                  aucune question : options données, sinon valeurs par défaut (et reprise si interrompue)
 #
-# Chaque étape réussie est notée dans /var/lib/list_songs/ : après un échec, relancer le script propose de reprendre
+# Chaque étape réussie est notée dans /var/lib/bibli_song/ : après un échec, relancer le script propose de reprendre
 # là où il s'est arrêté, avec les mêmes réponses, sans refaire les étapes validées.
 # Sans le dépôt à côté (script copié seul), il est cloné dans ~<utilisateur>/DEV.
 # Rien d'existant n'est écrasé (musique, configs, mot de passe, certificat).
@@ -24,8 +24,10 @@ set -euo pipefail
 
 MUSICS_DEFAUT=/srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics
 DEPOT_URL=https://github.com/k-vanier/DEV.git
-CONF=/etc/list_songs.conf
-ETAT=/var/lib/list_songs  # reponses (choix de l'installation), etapes (une étape validée par ligne), termine (date)
+CONF=/etc/bibli_song.conf
+ETAT=/var/lib/bibli_song  # reponses (choix de l'installation), etapes (une étape validée par ligne), termine (date)
+# noms avant le changement de nom du projet (list_songs → bibli_song), repris automatiquement
+CONF_ANCIEN=/etc/list_songs.conf ETAT_ANCIEN=/var/lib/list_songs
 REPONSES="MUSICS UTIL BASE ANCIENNE DISCOGS SAMBA DOMAINE PORT_EXT"
 MUSICS= UTIL= BASE= ANCIENNE= DISCOGS= SAMBA= DOMAINE= PORT_EXT= OUI=0 JETON= MODE=
 
@@ -53,6 +55,7 @@ case $BASE in ''|garder|vider) ;; *) echo "--base : garder ou vider"; exit 1 ;; 
 . /etc/os-release
 case "${ID:-} ${ID_LIKE:-}" in *debian*|*ubuntu*) ;; *) echo "Prévu pour Debian / Ubuntu (ici : ${PRETTY_NAME:-inconnu})"; exit 1 ;; esac
 OMV=0; [ -d /etc/openmediavault ] && OMV=1
+if [ -d "$ETAT_ANCIEN" ] && [ ! -e "$ETAT" ]; then mv "$ETAT_ANCIEN" "$ETAT"; fi  # état d'une installation list_songs
 INTER=0; [ -t 0 ] && [ $OUI = 0 ] && INTER=1
 
 # demander VARIABLE "question" [défaut] : la réponse, ou le défaut sans question (--oui, pas de terminal)
@@ -112,11 +115,11 @@ fi
 
 # ---------------------------------------------------------------- questions
 if [ "$MODE" != reprendre ]; then
-  [ $INTER = 1 ] && { echo "Installation de list_songs. Entrée = réponse proposée entre crochets."; echo; }
+  [ $INTER = 1 ] && { echo "Installation de bibli_song. Entrée = réponse proposée entre crochets."; echo; }
 
   # dossier musics : celui de l'installation précédente ou déjà configuré, celui du serveur d'origine, sinon un disque
   if [ -z "$MUSICS" ]; then
-    propose=${PREC_MUSICS:-$( (MUSICS=; [ -r "$CONF" ] && . "$CONF"; echo "${MUSICS:-}") )}
+    propose=${PREC_MUSICS:-$( (MUSICS=; for c in "$CONF" "$CONF_ANCIEN"; do [ -r "$c" ] && { . "$c"; break; }; done; echo "${MUSICS:-}") )}
     [ -n "$propose" ] || { [ -d "$MUSICS_DEFAUT" ] && propose=$MUSICS_DEFAUT; } || true
     if [ -z "$propose" ]; then
       disque=$(ls -d /srv/dev-disk-by-* 2>/dev/null | head -1 || true)
@@ -134,7 +137,7 @@ if [ "$MODE" != reprendre ]; then
       [ $INTER = 1 ] || exit 1
     done
   fi
-  [ -n "$UTIL" ] || demander UTIL "Compte qui lancera list_songs" "${PREC_UTIL:-${SUDO_USER:-}}"
+  [ -n "$UTIL" ] || demander UTIL "Compte qui lancera bibli_song" "${PREC_UTIL:-${SUDO_USER:-}}"
 fi
 chemin_valide "$MUSICS" || exit 1
 [ -n "$UTIL" ] && [ "$UTIL" != root ] || { echo "Préciser un compte autre que root : --utilisateur NOM"; exit 1; }
@@ -217,7 +220,7 @@ paquets() {
   apt-get install -y -qq -o Dpkg::Use-Pty=0 "$@" </dev/null >"$JOURNAL_APT" 2>&1 || { cat "$JOURNAL_APT" >&2; return 1; }
 }
 ICI=$(dirname "$(readlink -f "$0")")
-if [ -f "$ICI/list_songs.py" ]; then LS=$ICI; else LS=$MAISON/DEV/list_songs; fi
+if [ -f "$ICI/bibli_song.py" ]; then LS=$ICI; else LS=$MAISON/DEV/bibli_song; fi
 # adresse à taper depuis Windows ; sous WSL, le nom de la machine est celui du PC Windows lui-même
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 WSL=0; grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null && WSL=1
@@ -239,21 +242,22 @@ etape_depot() {
       en_tant_que git -C "$MAISON/DEV" pull -q --ff-only || echo "(mise à jour du dépôt impossible, on garde la version présente)"
     fi
   fi
-  chmod +x "$LS/list_songs" "$LS/list_songs.py" "$LS/annuaire/regenerer.sh" "$LS/annuaire/publier-https.sh" "$LS/installer.sh"
-  echo "list_songs : $LS"
+  chmod +x "$LS/bibli_song" "$LS/bibli_song.py" "$LS/annuaire/regenerer.sh" "$LS/annuaire/publier-https.sh" "$LS/installer.sh"
+  echo "bibli_song : $LS"
 }
 
 etape_dossiers() {
-  # lu par list_songs, regenerer.sh et publier-https.sh
-  printf "# écrit par list_songs/installer.sh\nMUSICS='%s'\n" "$MUSICS" > "$CONF"
+  # lu par bibli_song, regenerer.sh et publier-https.sh
+  printf "# écrit par bibli_song/installer.sh\nMUSICS='%s'\n" "$MUSICS" > "$CONF"
   chmod 644 "$CONF"
+  if grep -qs 'écrit par list_songs/installer.sh' "$CONF_ANCIEN"; then rm -f "$CONF_ANCIEN"; echo "ancien $CONF_ANCIEN remplacé"; fi
   echo "dossier musique enregistré dans $CONF"
   # seuls les dossiers créés ici changent de propriétaire : la musique déjà présente garde ses droits
   local d
   for d in "$MUSICS" "$MUSICS/Candidats" "$MUSICS/Musiques Low-Res" "$MUSICS/Musiques Hi-Res"; do
     [ -d "$d" ] || { install -d -o "$UTIL" -g "$GROUPE" -m 2775 "$d"; echo "créé : $d"; }
   done
-  # dossier déjà là mais appartenant à un autre compte (root, dossier partagé…) : list_songs doit pouvoir y écrire
+  # dossier déjà là mais appartenant à un autre compte (root, dossier partagé…) : bibli_song doit pouvoir y écrire
   if ! en_tant_que test -w "$MUSICS"; then
     if [ -z "$(ls -A "$MUSICS" | grep -vxE 'Candidats|Musiques Low-Res|Musiques Hi-Res' || true)" ]; then
       chown "$UTIL:$GROUPE" "$MUSICS"; chmod 2775 "$MUSICS"
@@ -271,8 +275,8 @@ etape_dossiers() {
 
 etape_base() {
   if [ "$ANCIENNE" = 1 ] && [ ! -d "$MUSICS/.beets" ]; then
-    # list_songs déplace ~/.config/beets dans musics/.beets à son premier lancement
-    en_tant_que "$LS/list_songs" --simulation --sans-internet | sed -n '1,3p'
+    # bibli_song déplace ~/.config/beets dans musics/.beets à son premier lancement
+    en_tant_que "$LS/bibli_song" --simulation --sans-internet | sed -n '1,3p'
     if grep -h '^directory:' "$MUSICS"/.beets/{lowres,hires}/config.yaml 2>/dev/null | grep -vF "$MUSICS/"; then
       echo "Attention : ces bibliothèques pointent ailleurs que $MUSICS (à corriger dans .beets/*/config.yaml)"
     fi
@@ -310,11 +314,15 @@ etape_base() {
 
 etape_commandes() {
   local c
-  for c in "list_songs:$LS/list_songs" "annuaire-regenerer:$LS/annuaire/regenerer.sh"; do
-    printf '#!/bin/sh\n# installé par list_songs/installer.sh (dossier musique : %s)\nexec '\''%s'\'' "$@"\n' "$CONF" "${c#*:}" > "/usr/local/bin/${c%%:*}"
+  for c in "bibli_song:$LS/bibli_song" "annuaire-regenerer:$LS/annuaire/regenerer.sh"; do
+    printf '#!/bin/sh\n# installé par bibli_song/installer.sh (dossier musique : %s)\nexec '\''%s'\'' "$@"\n' "$CONF" "${c#*:}" > "/usr/local/bin/${c%%:*}"
     chmod 755 "/usr/local/bin/${c%%:*}"
   done
-  echo "list_songs et annuaire-regenerer utilisables depuis n'importe quel dossier"
+  # ancienne commande list_songs (avant le changement de nom), qui pointerait vers un dossier disparu
+  if grep -qs 'installé par list_songs/installer.sh' /usr/local/bin/list_songs; then
+    rm -f /usr/local/bin/list_songs; echo "ancienne commande list_songs retirée : utiliser bibli_song"
+  fi
+  echo "bibli_song et annuaire-regenerer utilisables depuis n'importe quel dossier"
 }
 
 etape_discogs() {
@@ -331,7 +339,7 @@ etape_samba() {
     cp /etc/samba/smb.conf "/etc/samba/smb.conf.avant-$(date +%Y%m%d-%H%M%S)"
     cat >> /etc/samba/smb.conf <<EOF
 
-# ajouté par list_songs/installer.sh
+# ajouté par bibli_song/installer.sh
 [musics]
    path = $MUSICS
    valid users = $UTIL
@@ -389,7 +397,7 @@ date '+%d/%m/%Y %H:%M' > "$ETAT/termine"
 echo; echo "=== Tout est prêt"
 cat <<EOF
 1. Dépose ta musique (dossiers, zip, rar, 7z…) dans : $MUSICS/Candidats/
-2. Lance : list_songs --simulation   (pour voir), puis : list_songs
+2. Lance : bibli_song --simulation   (pour voir), puis : bibli_song
 Annuaire            : $MUSICS/Annuaire.html (régénérer : annuaire-regenerer)
 À sauvegarder       : $MUSICS (musique + .beets/)$([ -s "$MAISON/discog" ] && echo " et $MAISON/discog")
 EOF

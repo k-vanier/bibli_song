@@ -20,9 +20,9 @@ Une fois un album importé, ses fichiers restants dans Candidats (images, .cue, 
 Ce qui n'a pas pu être importé (format non pris en charge, illisible) reste dans Candidats.
 
 Usage :
-  list_songs                  range tout ce qui est dans Candidats
-  list_songs --simulation     montre ce qui serait fait, sans rien ranger
-  list_songs --sans-internet  pas de recherche de pochette en ligne
+  bibli_song                  range tout ce qui est dans Candidats
+  bibli_song --simulation     montre ce qui serait fait, sans rien ranger
+  bibli_song --sans-internet  pas de recherche de pochette en ligne
 """
 import argparse, colorsys, datetime, fcntl, hashlib, io, json, os, re, shutil, sqlite3, subprocess, sys
 import tarfile, tempfile, textwrap, threading, time, urllib.parse, urllib.request, zipfile
@@ -35,13 +35,14 @@ from mediafile import MediaFile  # noqa: E402
 from PIL import Image, ImageDraw, ImageFont  # noqa: E402
 from unidecode import unidecode  # noqa: E402
 
-CONF = '/etc/list_songs.conf'  # écrit par installer.sh : MUSICS='/chemin/du/dossier/musics'
+CONF = '/etc/bibli_song.conf'  # écrit par installer.sh : MUSICS='/chemin/du/dossier/musics'
+CONF_ANCIEN = '/etc/list_songs.conf'  # nom du projet avant bibli_song
 
 
 def musics_conf():
     """Dossier musics choisi à l'installation, sinon celui du serveur d'origine."""
     try:
-        for line in open(CONF, encoding='utf-8'):
+        for line in open(CONF if os.path.exists(CONF) else CONF_ANCIEN, encoding='utf-8'):
             k, _, v = line.strip().partition('=')
             if k == 'MUSICS' and v.strip(' \'"'):
                 return v.strip(' \'"').rstrip('/') + '/'
@@ -76,7 +77,7 @@ OTHER_LOSSY = ('.wma', '.ogg', '.opus', '.aac', '.mpc')
 AUDIO_EXT = LOW_EXT + HI_EXT + OTHER_LOSSY + ('.m4a',)
 TAR_EXT = ('.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz')
 ARCHIVE_EXT = ('.zip', '.rar', '.7z') + TAR_EXT
-UA = 'list_songs/1.0 (bibliotheque musicale personnelle)'
+UA = 'bibli_song/1.0 (bibliotheque musicale personnelle)'
 MINW = 500
 DEJA = '_déjà présents'
 

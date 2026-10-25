@@ -11,8 +11,9 @@ set -euo pipefail
 
 DOMAINE=${1:-}
 PORT_EXT=${2:-8443}
-# dossier musics : variable MUSICS, sinon /etc/list_songs.conf (écrit par installer.sh), sinon celui du serveur
-M=${MUSICS:-}; MUSICS=; [ -r /etc/list_songs.conf ] && . /etc/list_songs.conf
+# dossier musics : variable MUSICS, sinon /etc/bibli_song.conf (écrit par installer.sh ; /etc/list_songs.conf avant
+# le changement de nom du projet), sinon celui du serveur
+M=${MUSICS:-}; MUSICS=; for c in /etc/bibli_song.conf /etc/list_songs.conf; do [ -r "$c" ] && { . "$c"; break; }; done
 MUSICS=${M:-${MUSICS:-/srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics}}; MUSICS=${MUSICS%/}
 HTTP=8080
 HTTPS=8443
@@ -24,7 +25,7 @@ LE=/etc/letsencrypt/live/$DOMAINE
 
 [ -n "$DOMAINE" ] || { sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 [ "$(id -u)" = 0 ] || { echo "À lancer avec sudo."; exit 1; }
-[ -f "$MUSICS/Annuaire.html" ] || { echo "Annuaire introuvable : $MUSICS/Annuaire.html (lancer list_songs une fois)"; exit 1; }
+[ -f "$MUSICS/Annuaire.html" ] || { echo "Annuaire introuvable : $MUSICS/Annuaire.html (lancer bibli_song une fois)"; exit 1; }
 
 # ports déjà pris par autre chose que nginx (un conteneur Docker, par exemple)
 for p in $HTTP $HTTPS; do
@@ -56,7 +57,7 @@ chown root:www-data "$HTPASSWD"; chmod 640 "$HTPASSWD"
 # écrit la config nginx avec le certificat donné
 ecrire_conf() {
   cat > "$CONF" <<EOF
-# généré par list_songs/annuaire/publier-https.sh
+# généré par bibli_song/annuaire/publier-https.sh
 server {
     listen $HTTP;
     location /.well-known/acme-challenge/ { root $ACME; }

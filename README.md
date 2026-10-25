@@ -1,8 +1,12 @@
-# list_songs
+# bibli_song
 
 Automatically files the music dropped into `musics/Candidats/` into two libraries
 (`musics/Musiques Low-Res` for MP3, `musics/Musiques Hi-Res` for FLAC/WAV/DSD/AIFF/WavPack/APE/ALAC),
 using [beets](https://beets.io).
+
+Formerly `list_songs`. On a machine installed under the old name, after `git pull` the folder is `bibli_song/` and
+the command `./bibli_song`; `/etc/list_songs.conf` and `/var/lib/list_songs/` are still read, and running
+`installer.sh` again replaces them and the old `list_songs` command with the new names.
 
 ## What the script does
 
@@ -50,29 +54,29 @@ On a fresh Debian or Ubuntu server:
 ```
 sudo apt install -y git
 git clone https://github.com/k-vanier/DEV.git ~/DEV
-sudo ~/DEV/list_songs/installer.sh
+sudo ~/DEV/bibli_song/installer.sh
 ```
 
 `installer.sh` asks its questions first, shows a summary, then installs without stopping:
 
 - where to create the music folder (it shows the free space per disk and proposes the folder already configured,
-  the original server's folder or a data disk), and which account runs list_songs;
+  the original server's folder or a data disk), and which account runs bibli_song;
 - if a beets database already exists there: keep it, or start from an empty one (the old one is saved in
   `.beets/journal/`); an old `~/.config/beets` can be taken over;
 - Discogs token, Samba share (not on openmediavault: use its interface), HTTPS publishing (domain, external port).
 
 It then installs the packages (beets, Pillow, mediafile, unidecode, DejaVu fonts, unar, 7-Zip), saves the chosen
-folder in `/etc/list_songs.conf` (read by `list_songs`, `regenerer.sh` and `publier-https.sh`), creates `Candidats/`,
-both libraries and `.beets/` with both beets configurations and two empty databases, installs the `list_songs` and
+folder in `/etc/bibli_song.conf` (read by `bibli_song`, `regenerer.sh` and `publier-https.sh`), creates `Candidats/`,
+both libraries and `.beets/` with both beets configurations and two empty databases, installs the `bibli_song` and
 `annuaire-regenerer` commands in `/usr/local/bin` and builds the directory page. Then just drop music into
-`Candidats/` and run `list_songs`.
+`Candidats/` and run `bibli_song`.
 
 With `--samba`, the share is `\\<server IP>\musics`, user = the account, password = the Samba password typed during
 the installation. Under WSL, the machine name is the Windows PC's own name, so use the IP address (`hostname -I`),
 which changes when WSL restarts; in NAT mode only that PC can reach it. Run a single Samba at a time across WSL
 distributions: they share the network, and two servers on port 445 answer connections at random.
 
-Each successful step is recorded in `/var/lib/list_songs/` (with the answers, never the Discogs token). If a step
+Each successful step is recorded in `/var/lib/bibli_song/` (with the answers, never the Discogs token). If a step
 fails, the script says which one and how to resume: run it again and it offers to resume where it stopped, with the
 same answers, skipping the validated steps, or to start over. Once an installation is finished, running it again
 asks whether to redo it. `--reprendre` / `--recommencer` skip that question.
@@ -84,18 +88,18 @@ overwritten, so it can be run again. To restore from a backup, put the music fol
 ## Usage
 
 ```
-./list_songs --simulation     # preview, nothing is moved
-./list_songs                  # actual filing
-./list_songs --sans-internet  # covers without online lookup
-./list_songs --sans-pochettes # no covers
-./list_songs --empreintes     # precompute hashes for the whole library (optional)
-./list_songs --verification   # full hash recomputation + library check
-./list_songs --verification --simulation  # same, without fixing anything
-./list_songs --retirer "Artistes/X/(2004) Album"                  # cleanly remove an album
-./list_songs --retirer "Artistes/X/(2004) Album/01 - Titre.flac"  # or a track
+./bibli_song --simulation     # preview, nothing is moved
+./bibli_song                  # actual filing
+./bibli_song --sans-internet  # covers without online lookup
+./bibli_song --sans-pochettes # no covers
+./bibli_song --empreintes     # precompute hashes for the whole library (optional)
+./bibli_song --verification   # full hash recomputation + library check
+./bibli_song --verification --simulation  # same, without fixing anything
+./bibli_song --retirer "Artistes/X/(2004) Album"                  # cleanly remove an album
+./bibli_song --retirer "Artistes/X/(2004) Album/01 - Titre.flac"  # or a track
 ```
 
-The `musics/` folder comes from `/etc/list_songs.conf`; the `RANGER_ROOT` environment variable overrides it (`RANGER_HOME` too).
+The `musics/` folder comes from `/etc/bibli_song.conf`; the `RANGER_ROOT` environment variable overrides it (`RANGER_HOME` too).
 
 ## Requirements
 

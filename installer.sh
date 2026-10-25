@@ -17,13 +17,13 @@
 #
 # Chaque étape réussie est notée dans /var/lib/bibli_song/ : après un échec, relancer le script propose de reprendre
 # là où il s'est arrêté, avec les mêmes réponses, sans refaire les étapes validées.
-# Sans le dépôt à côté (script copié seul), il est cloné dans ~<utilisateur>/DEV.
+# Sans le dépôt à côté (script copié seul), il est cloné dans ~<utilisateur>/bibli_song.
 # Rien d'existant n'est écrasé (musique, configs, mot de passe, certificat).
 # Pour repartir d'une sauvegarde : remettre le dossier musics (il contient .beets/, les bases), puis lancer ce script.
 set -euo pipefail
 
 MUSICS_DEFAUT=/srv/dev-disk-by-uuid-2a16d8ee-941c-4fa7-a2d0-03ce63105226/partage/musics
-DEPOT_URL=https://github.com/k-vanier/DEV.git
+DEPOT_URL=https://github.com/k-vanier/bibli_song.git
 CONF=/etc/bibli_song.conf
 ETAT=/var/lib/bibli_song  # reponses (choix de l'installation), etapes (une étape validée par ligne), termine (date)
 # noms avant le changement de nom du projet (list_songs → bibli_song), repris automatiquement
@@ -220,7 +220,7 @@ paquets() {
   apt-get install -y -qq -o Dpkg::Use-Pty=0 "$@" </dev/null >"$JOURNAL_APT" 2>&1 || { cat "$JOURNAL_APT" >&2; return 1; }
 }
 ICI=$(dirname "$(readlink -f "$0")")
-if [ -f "$ICI/bibli_song.py" ]; then LS=$ICI; else LS=$MAISON/DEV/bibli_song; fi
+if [ -f "$ICI/bibli_song.py" ]; then LS=$ICI; else LS=$MAISON/bibli_song; fi
 # adresse à taper depuis Windows ; sous WSL, le nom de la machine est celui du PC Windows lui-même
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 WSL=0; grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null && WSL=1
@@ -236,10 +236,10 @@ etape_paquets() {
 
 etape_depot() {
   if [ "$LS" != "$ICI" ]; then
-    if [ ! -d "$MAISON/DEV/.git" ]; then
-      en_tant_que git clone -q "$DEPOT_URL" "$MAISON/DEV"
+    if [ ! -d "$LS/.git" ]; then
+      en_tant_que git clone -q "$DEPOT_URL" "$LS"
     else
-      en_tant_que git -C "$MAISON/DEV" pull -q --ff-only || echo "(mise à jour du dépôt impossible, on garde la version présente)"
+      en_tant_que git -C "$LS" pull -q --ff-only || echo "(mise à jour du dépôt impossible, on garde la version présente)"
     fi
   fi
   chmod +x "$LS/bibli_song" "$LS/bibli_song.py" "$LS/annuaire/regenerer.sh" "$LS/annuaire/publier-https.sh" "$LS/installer.sh"

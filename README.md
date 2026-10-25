@@ -53,8 +53,8 @@ On a fresh Debian or Ubuntu server:
 
 ```
 sudo apt install -y git
-git clone https://github.com/k-vanier/DEV.git ~/DEV
-sudo ~/DEV/bibli_song/installer.sh
+git clone https://github.com/k-vanier/bibli_song.git ~/bibli_song
+sudo ~/bibli_song/installer.sh
 ```
 
 `installer.sh` asks its questions first, shows a summary, then installs without stopping:
